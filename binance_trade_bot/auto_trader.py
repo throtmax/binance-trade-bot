@@ -176,15 +176,14 @@ class AutoTrader:
         """
         now = datetime.now()
 
-        session: Session
-        with self.db.db_session() as session:
-            coins: List[Coin] = session.query(Coin).all()
-            for coin in coins:
-                balance = self.manager.get_currency_balance(coin.symbol)
-                if balance == 0:
-                    continue
-                usd_value = self.manager.get_ticker_price(coin + "USDT")
-                btc_value = self.manager.get_ticker_price(coin + "BTC")
-                cv = CoinValue(coin, balance, usd_value, btc_value, datetime=now)
-                session.add(cv)
-                self.db.send_update(cv)
+        coins = self.db.get_coins(False)
+        cv_batch = []
+        for coin in coins:
+            balance = self.manager.get_currency_balance(coin.symbol)
+            if balance == 0:
+                continue
+            usd_value = self.manager.get_ticker_price(coin + "USDT")
+            btc_value = self.manager.get_ticker_price(coin + "BTC")
+            cv = CoinValue(coin, balance, usd_value, btc_value, datetime=now)
+            cv_batch.append(cv)
+        self.db.batch_update_coin_values(cv_batch)

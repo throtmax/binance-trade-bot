@@ -285,7 +285,7 @@ class Database:
                 CoinValue.__table__.insert(),
                 [
                     {
-                        "coin_id": cv.coin.id,
+                        "coin_id": cv.coin.symbol,
                         "balance": cv.balance,
                         "usd_price": cv.usd_price,
                         "btc_price": cv.btc_price,

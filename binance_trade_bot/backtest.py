@@ -1,7 +1,7 @@
+from collections import defaultdict
 from datetime import datetime, timedelta
 from traceback import format_exc
 from typing import Dict
-from collections import defaultdict
 
 from sqlitedict import SqliteDict
 

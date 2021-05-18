@@ -1,8 +1,9 @@
 from collections import defaultdict
 from datetime import datetime, timedelta
 from traceback import format_exc
-from typing import Dict
+from typing import Dict, List
 
+import binance.client
 from sqlitedict import SqliteDict
 
 from .binance_api_manager import BinanceAPIManager
@@ -29,6 +30,16 @@ class MockBinanceManager(BinanceAPIManager):
         self.config = config
         self.datetime = start_date or datetime(2021, 1, 1)
         self.balances = start_balances or {config.BRIDGE.symbol: 100}
+        self.non_existing_pairs = set()
+        self.reinit_trader_callback = None
+
+    def set_reinit_trader_callback(self, reinit_trader_callback):
+        self.reinit_trader_callback = reinit_trader_callback
+
+    def set_coins(self, coins_list: List[str]):
+        self.db.set_coins(coins_list)
+        if self.reinit_trader_callback is not None:
+            self.reinit_trader_callback()
 
     def setup_websockets(self):
         pass  # No websockets are needed for backtesting
@@ -37,7 +48,7 @@ class MockBinanceManager(BinanceAPIManager):
         self.datetime += timedelta(minutes=interval)
 
     def get_fee(self, origin_coin: Coin, target_coin: Coin, selling: bool):
-        return 0.0075
+        return 0.001
 
     def get_ticker_price(self, ticker_symbol: str):
         """
@@ -126,7 +137,13 @@ class MockBinanceManager(BinanceAPIManager):
                     continue
                 total += balance / price
             else:
-                price = self.get_ticker_price(coin + target_symbol)
+                if coin + target_symbol in self.non_existing_pairs:
+                    continue
+                price = None
+                try:
+                    price = self.get_ticker_price(coin + target_symbol)
+                except binance.client.BinanceAPIException:
+                    self.non_existing_pairs.add(coin + target_symbol)
                 if price is None:
                     continue
                 total += price * balance
@@ -184,6 +201,7 @@ def backtest(
     trader = strategy(manager, db, logger, config)
     trader.initialize()
 
+    manager.set_reinit_trader_callback(trader.initialize)
     yield manager
 
     n = 1

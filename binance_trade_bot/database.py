@@ -1,7 +1,6 @@
 import json
 import os
 import time
-from collections import namedtuple
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from typing import List, Optional, Union
@@ -14,8 +13,6 @@ from sqlalchemy.orm import Session, scoped_session, sessionmaker
 from .config import Config
 from .logger import Logger
 from .models import *  # pylint: disable=wildcard-import
-
-LogScout = namedtuple("LogScout", ["pair", "target_ratio", "coin_price", "optional_coin_price"])
 
 
 class Database:
@@ -148,23 +145,24 @@ class Database:
             session.expunge_all()
             return pairs
 
-    def batch_log_scout(self, logs: List[LogScout]):
+    def batch_log_scout(self, logs: List[ScoutHistory]):
         session: Session
         with self.db_session() as session:
-            dt = datetime.now()
             session.execute(
                 ScoutHistory.__table__.insert(),
                 [
                     {
                         "pair_id": ls.pair.id,
                         "target_ratio": ls.target_ratio,
-                        "current_coin_price": ls.coin_price,
-                        "other_coin_price": ls.optional_coin_price,
-                        "datetime": dt,
+                        "current_coin_price": ls.current_coin_price,
+                        "other_coin_price": ls.other_coin_price,
+                        "datetime": ls.datetime,
                     }
                     for ls in logs
                 ],
             )
+            for scout_history in logs:
+                self.send_update(scout_history)
 
     def log_scout(
         self,

@@ -154,7 +154,7 @@ class AutoTrader:
         last_coin: Coin = coin
         last_coin_price = coin_price
         while can_walk_deeper:
-            ratio_dict, prices = self._get_ratios(last_coin, last_coin_price, enable_scout_log=(len(jump_chain) > 1))
+            ratio_dict, prices = self._get_ratios(last_coin, last_coin_price, enable_scout_log=(len(jump_chain) == 1))
 
             ratio_dict = {k: v for k, v in ratio_dict.items() if v > 0}
 

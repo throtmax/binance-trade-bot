@@ -1,11 +1,13 @@
 import asyncio
 import threading
 import uuid
+from collections import deque
 from contextlib import asynccontextmanager, contextmanager, suppress
 from typing import Callable, Dict, List, Optional, Set, Tuple, Union
 
 import binance.client
 from binance.exceptions import BinanceAPIException, BinanceRequestException
+from sortedcontainers import SortedDict
 from unicorn_binance_websocket_api import BinanceWebSocketApiManager
 
 from .config import Config
@@ -85,6 +87,195 @@ class BinanceCache:  # pylint: disable=too-few-public-methods
             yield self._balances
 
 
+class DepthCache:
+    def __init__(self, symbol, keep_limit=200, max_size=400):
+        """Initialise the DepthCache
+
+        :param symbol: Symbol to create depth cache for
+        :type symbol: string
+        :param keep_limit: How many items to keep in each dict after wipe
+        :type keep_limit: int
+        :param max_size: Max size of dict after which wipe occurs
+        :type max_size: int
+
+        """
+        self.symbol = symbol
+        self.bids = SortedDict()
+        self.asks = SortedDict()
+        # self.update_time = None
+        self.keep_limit = keep_limit
+        self.max_size = max_size
+
+    def add_bid(self, bid):
+        """Add a bid to the cache
+
+        :param bid:
+        :return:
+
+        """
+        price = float(bid[0])
+        amount = self.bids[price] = float(bid[1])
+        if amount == 0:
+            del self.bids[price]
+        elif len(self.bids) >= self.max_size:
+            self.bids = SortedDict({k: self.bids[k] for k in self.bids.keys()[-self.keep_limit :]})
+
+    def add_ask(self, ask):
+        """Add an ask to the cache
+
+        :param ask:
+        :return:
+
+        """
+        price = float(ask[0])
+        amount = self.asks[price] = float(ask[1])
+        if amount == 0:
+            del self.asks[price]
+        elif len(self.asks) >= self.max_size:
+            self.asks = SortedDict({k: self.asks[k] for k in self.asks.keys()[: self.keep_limit]})
+
+    def get_bids(self):
+        """Get the current bids
+
+        :return: list of bids with price and quantity as conv_type
+
+        .. code-block:: python
+
+            [
+                [
+                    0.0001946,  # Price
+                    45.0        # Quantity
+                ],
+                [
+                    0.00019459,
+                    2384.0
+                ],
+                [
+                    0.00019158,
+                    5219.0
+                ],
+                [
+                    0.00019157,
+                    1180.0
+                ],
+                [
+                    0.00019082,
+                    287.0
+                ]
+            ]
+
+        """
+        return reversed(self.bids.items())
+
+    def get_asks(self):
+        """Get the current asks
+
+        :return: list of asks with price and quantity as conv_type.
+
+        .. code-block:: python
+
+            [
+                [
+                    0.0001955,  # Price
+                    57.0'       # Quantity
+                ],
+                [
+                    0.00019699,
+                    778.0
+                ],
+                [
+                    0.000197,
+                    64.0
+                ],
+                [
+                    0.00019709,
+                    1130.0
+                ],
+                [
+                    0.0001971,
+                    385.0
+                ]
+            ]
+
+        """
+        return self.asks.items()
+
+    def clear(self):
+        self.bids.clear()
+        self.asks.clear()
+
+
+class DepthCacheManager:
+    def __init__(self, symbol, client: binance.AsyncClient, logger: Logger, limit=10):
+        self.id = uuid.uuid4()
+        self.pending_signals_counter = 0
+        self.pending_reinit = False
+        self.data_queue = deque()
+        self.symbol = symbol
+        self.depth_cache = DepthCache(symbol)
+        self.client = client
+        self.limit = limit
+        self.last_update_id = -1
+        self.logger = logger
+
+    async def _handle_data(self, data):
+        if data["final_update_id_in_event"] <= self.last_update_id:
+            return  # ignore
+        if data["first_update_id_in_event"] > self.last_update_id + 1:
+            print(f"{self.symbol}: reinit again {data['first_update_id_in_event'] - self.last_update_id}")
+            await self.reinit()
+            return
+        self.apply_orders(data)
+        self.last_update_id = data["final_update_id_in_event"]
+
+    def buffer_incoming_data(self) -> bool:
+        return self.pending_signals_counter > 0 or self.pending_reinit
+
+    async def process_data(self, data):
+        if self.buffer_incoming_data():
+            self.data_queue.append(data)
+            return
+
+        while len(self.data_queue) > 0:
+            pop_data = self.data_queue.popleft()
+            await self._handle_data(pop_data)
+        await self._handle_data(data)
+
+    def apply_orders(self, msg):
+        for bid in msg["bids"]:
+            self.depth_cache.add_bid(bid)
+        for ask in msg["asks"]:
+            self.depth_cache.add_ask(ask)
+
+    async def reinit(self):
+        self.pending_reinit = True
+        self.depth_cache.clear()
+        while True:
+            try:
+                res = await self.client.get_order_book(symbol=self.symbol, limit=self.limit)
+            except binance.exceptions.BinanceAPIException as e:
+                self.logger.error(f"Error while fetching snapshot of order book: {e}")
+                await asyncio.sleep(0.5)
+            else:
+                break
+        self.apply_orders(res)
+        self.last_update_id = res["lastUpdateId"]
+        self.pending_reinit = False
+
+    async def process_signal(self, signal):
+        if signal["type"] == "CONNECT":
+            print(f"Connect {self.symbol}")
+            await self.reinit()
+        elif signal["type"] == "DISCONNECT":
+            print("Disconnect")
+            self.depth_cache.clear()
+        self.pending_signals_counter -= 1
+        assert self.pending_signals_counter >= 0
+
+    def notify_pending_signal(self):
+        self.pending_signals_counter += 1
+
+
 class AsyncListenerContext:
     def __init__(
         self,
@@ -94,6 +285,7 @@ class AsyncListenerContext:
         client: binance.AsyncClient,
         pending_orders: Set[Tuple[str, int]],
         pending_orders_mutex: ThreadSafeAsyncLock,
+        depth_cache_managers: Dict[str, DepthCacheManager],
     ):
         self.queues: Dict[str, asyncio.Queue] = {name: asyncio.Queue() for name in buffer_names}
         self.loop = asyncio.get_running_loop()
@@ -105,6 +297,8 @@ class AsyncListenerContext:
         self.client = client
         self.pending_orders = pending_orders
         self.pending_orders_mutex = pending_orders_mutex
+        self.depth_cache_managers = depth_cache_managers
+        # self.depth_cache_managers =
 
     def attach_stream_uuid_resolver(self, resolver: Callable[[uuid.UUID], str]):
         self.resolver = resolver
@@ -116,6 +310,56 @@ class AsyncListenerContext:
         if self.stopped:
             return
         asyncio.run_coroutine_threadsafe(self.queues[stream_buffer_name].put(stream_data), self.loop)
+
+    async def get_market_sell_price_fill_quote(self, symbol: str, quote: float):
+        depth_cache = self.depth_cache_managers[symbol].depth_cache
+        amount = 0.0
+        unfilled_quote = quote
+        filled = False
+        for (price, bid_amount) in reversed(depth_cache.bids.items()):
+            curr_amount = unfilled_quote / price
+            fill = min(bid_amount, curr_amount)
+            amount += fill
+            unfilled_quote -= price * fill
+            if abs(unfilled_quote) <= 1e-15:
+                filled = True
+                break
+        if not filled:
+            return None, None
+        return quote / amount, amount
+
+    async def get_market_sell_price(self, symbol: str, amount: float):
+        depth_cache = self.depth_cache_managers[symbol].depth_cache
+        quote = 0.0
+        unfilled_amount = amount
+        filled = False
+        for (price, bid_amount) in reversed(depth_cache.bids.items()):
+            fill = min(bid_amount, unfilled_amount)
+            quote += price * fill
+            unfilled_amount -= fill
+            if abs(unfilled_amount) <= 1e-15:
+                filled = True
+                break
+        if not filled:
+            return None, None
+        return quote / amount, quote
+
+    async def get_market_buy_price(self, symbol: str, quote_amount: float):
+        depth_cache = self.depth_cache_managers[symbol].depth_cache
+        amount = 0.0
+        unfilled_quote = quote_amount
+        filled = False
+        for (price, ask_amount) in depth_cache.asks.items():
+            curr_amount = unfilled_quote / price
+            fill = min(curr_amount, ask_amount)
+            amount += fill
+            unfilled_quote -= fill * price
+            if abs(unfilled_quote) <= 1e-15:
+                filled = True
+                break
+        if not filled:
+            return None, None
+        return quote_amount / amount, amount
 
     def add_signal_data(self, signal_data: Dict):
         if self.stopped:
@@ -269,6 +513,22 @@ class UserDataListener(AsyncListener):
             await self._invalidate_balances()
 
 
+class DepthListener(AsyncListener):
+    def __init__(self, async_context: AsyncListenerContext, depth_cache_managers: Dict[str, DepthCacheManager]):
+        super().__init__(BUFFER_NAME_DEPTH, async_context)
+        self.depth_cache_managers = depth_cache_managers
+
+    async def handle_data(self, data):
+        if "symbol" in data:
+            await self.depth_cache_managers[data["symbol"]].process_data(data)
+
+    async def handle_signal(self, signal):
+        for dcm in self.depth_cache_managers.values():  # switch every dcm to backpressure
+            dcm.notify_pending_signal()
+        for dcm in self.depth_cache_managers.values():
+            asyncio.create_task(dcm.process_signal(signal))
+
+
 class OrderGuard:
     def __init__(self, pending_orders: Set[Tuple[str, int]], mutex: ThreadSafeAsyncLock):
         self.pending_orders = pending_orders
@@ -311,13 +571,18 @@ class BinanceStreamManager(threading.Thread):
         client = await binance.AsyncClient.create(
             self.config.BINANCE_API_KEY, self.config.BINANCE_API_SECRET_KEY, tld=self.config.BINANCE_TLD
         )
+        depth_markets = [coin.lower() + self.config.BRIDGE.symbol.lower() for coin in self.config.SUPPORTED_COIN_LIST]
+        depth_cache_managers = {
+            symbol.upper(): DepthCacheManager(symbol.upper(), client, self.logger) for symbol in depth_markets
+        }
         self.async_context = AsyncListenerContext(
-            [BUFFER_NAME_MINITICKERS, BUFFER_NAME_USERDATA],
+            [BUFFER_NAME_MINITICKERS, BUFFER_NAME_USERDATA, BUFFER_NAME_DEPTH],
             self.cache,
             self.logger,
             client,
             self.pending_orders,
             self.pending_orders_mutex,
+            depth_cache_managers,
         )
         self.bwam = AsyncListenedBWAM(
             self.async_context,
@@ -335,9 +600,14 @@ class BinanceStreamManager(threading.Thread):
             api_secret=self.config.BINANCE_API_SECRET_KEY,
             stream_buffer_name=BUFFER_NAME_USERDATA,
         )
-        await asyncio.gather(
-            *[TickerListener(self.async_context).run_loop(), UserDataListener(self.async_context).run_loop()]
-        )
+
+        self.bwam.create_stream(["depth@100ms"], depth_markets, stream_buffer_name=BUFFER_NAME_DEPTH)
+        listeners = [
+            TickerListener(self.async_context),
+            UserDataListener(self.async_context),
+            DepthListener(self.async_context, depth_cache_managers),
+        ]
+        await asyncio.gather(*[listener.run_loop() for listener in listeners])
 
     def run(self) -> None:
         with suppress(asyncio.CancelledError):
@@ -346,5 +616,26 @@ class BinanceStreamManager(threading.Thread):
     def acquire_order_guard(self):
         return OrderGuard(self.pending_orders, self.pending_orders_mutex)
 
+    def get_market_sell_price(self, symbol: str, amount: float):
+        if self.async_context is None:
+            return None
+        return asyncio.run_coroutine_threadsafe(
+            self.async_context.get_market_sell_price(symbol, amount), self.async_context.loop
+        ).result()
+
+    def get_market_buy_price(self, symbol: str, quote_amount: float):
+        if self.async_context is None:
+            return None
+        return asyncio.run_coroutine_threadsafe(
+            self.async_context.get_market_buy_price(symbol, quote_amount), self.async_context.loop
+        ).result()
+
     def close(self):
         self.bwam.stop_manager_with_all_streams()
+
+    def get_market_sell_price_fill_quote(self, symbol: str, quote_amount: float):
+        if self.async_context is None:
+            return None
+        return asyncio.run_coroutine_threadsafe(
+            self.async_context.get_market_sell_price_fill_quote(symbol, quote_amount), self.async_context.loop
+        ).result()

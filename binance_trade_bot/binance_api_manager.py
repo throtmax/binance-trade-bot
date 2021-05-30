@@ -78,6 +78,15 @@ class BinanceAPIManager:
         """
         return self.binance_client.get_account()
 
+    def get_market_sell_price(self, symbol: str, amount: float) -> (float, float):
+        return self.stream_manager.get_market_sell_price(symbol, amount)
+
+    def get_market_buy_price(self, symbol: str, quote_amount: float) -> (float, float):
+        return self.stream_manager.get_market_buy_price(symbol, quote_amount)
+
+    def get_market_sell_price_fill_quote(self, symbol: str, quote_amount: float) -> (float, float):
+        return self.stream_manager.get_market_sell_price_fill_quote(symbol, quote_amount)
+
     def get_ticker_price(self, ticker_symbol: str):
         """
         Get ticker price of a specific coin

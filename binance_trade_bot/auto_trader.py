@@ -1,4 +1,5 @@
 import time
+from abc import ABC, abstractmethod
 from collections import defaultdict
 from datetime import datetime
 from typing import Dict, Tuple
@@ -12,7 +13,7 @@ from .logger import Logger
 from .models import Coin, CoinValue, Pair, ScoutHistory
 
 
-class AutoTrader:
+class AutoTrader(ABC):
     def __init__(self, binance_manager: BinanceAPIManager, database: Database, logger: Logger, config: Config):
         self.manager = binance_manager
         self.db = database
@@ -110,11 +111,12 @@ class AutoTrader:
 
                     pair.ratio = from_coin_price / to_coin_price
 
+    @abstractmethod
     def scout(self):
         """
         Scout for potential jumps from the current coin to another coin
         """
-        raise NotImplementedError()
+        ...
 
     def _get_ratios(
         self, coin: Coin, coin_sell_price, quote_amount, enable_scout_log=True, session=None

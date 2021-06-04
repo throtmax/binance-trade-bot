@@ -206,7 +206,7 @@ class DepthCache:
 
 
 class DepthCacheManager:
-    def __init__(self, symbol, client: binance.AsyncClient, logger: Logger, limit=10):
+    def __init__(self, symbol, client: binance.AsyncClient, logger: Logger, limit=100):
         self.id = uuid.uuid4()
         self.pending_signals_counter = 0
         self.pending_reinit = False

@@ -230,8 +230,6 @@ class AutoTrader(ABC):
         ):
             return None
 
-        print("do bridge scout")
-
         for coin in coins:
             current_coin_price = self.manager.get_ticker_price(coin + self.config.BRIDGE)
 

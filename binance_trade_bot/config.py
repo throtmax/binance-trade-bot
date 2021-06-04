@@ -1,8 +1,6 @@
 import configparser
 import os
 
-import binance.client
-
 from .models import Coin
 
 CFG_FL_NAME = "user.cfg"
@@ -10,23 +8,17 @@ USER_CFG_SECTION = "binance_user_config"
 
 
 class Config:  # pylint: disable=too-few-public-methods,too-many-instance-attributes
-    ORDER_TYPE_MARKET = "market"
-    ORDER_TYPE_LIMIT = "limit"
-
     def __init__(self):
         # Init config
         config = configparser.ConfigParser()
         config["DEFAULT"] = {
             "bridge": "USDT",
             "scout_multiplier": "5",
-            "scout_sleep_time": "5",
+            "scout_sleep_time": "1",
             "hourToKeepScoutHistory": "1",
             "tld": "com",
             "strategy": "default",
-            "sell_timeout": "0",
-            "buy_timeout": "0",
-            "sell_order_type": self.ORDER_TYPE_MARKET,
-            "buy_order_type": self.ORDER_TYPE_LIMIT,
+            "enable_paper_trading": False,
         }
 
         if not os.path.exists(CFG_FL_NAME):
@@ -73,36 +65,6 @@ class Config:  # pylint: disable=too-few-public-methods,too-many-instance-attrib
         self.CURRENT_COIN_SYMBOL = os.environ.get("CURRENT_COIN_SYMBOL") or config.get(USER_CFG_SECTION, "current_coin")
 
         self.STRATEGY = os.environ.get("STRATEGY") or config.get(USER_CFG_SECTION, "strategy")
-
-        self.SELL_TIMEOUT = os.environ.get("SELL_TIMEOUT") or config.get(USER_CFG_SECTION, "sell_timeout")
-        self.BUY_TIMEOUT = os.environ.get("BUY_TIMEOUT") or config.get(USER_CFG_SECTION, "buy_timeout")
-
-        order_type_map = {
-            self.ORDER_TYPE_LIMIT: binance.client.Client.ORDER_TYPE_LIMIT,
-            self.ORDER_TYPE_MARKET: binance.client.Client.ORDER_TYPE_MARKET,
-        }
-
-        sell_order_type = os.environ.get("SELL_ORDER_TYPE") or config.get(
-            USER_CFG_SECTION, "sell_order_type", fallback=self.ORDER_TYPE_MARKET
+        self.ENABLE_PAPER_TRADING = bool(
+            os.environ.get("ENABLE_PAPER_TRADING") or config.get(USER_CFG_SECTION, "enable_paper_trading")
         )
-        if sell_order_type not in order_type_map:
-            raise Exception(
-                f"{self.ORDER_TYPE_LIMIT} or {self.ORDER_TYPE_MARKET} expected, got {sell_order_type}"
-                "for sell_order_type"
-            )
-        self.SELL_ORDER_TYPE = order_type_map[sell_order_type]
-
-        buy_order_type = os.environ.get("BUY_ORDER_TYPE") or config.get(
-            USER_CFG_SECTION, "buy_order_type", fallback=self.ORDER_TYPE_LIMIT
-        )
-        if buy_order_type not in order_type_map:
-            raise Exception(
-                f"{self.ORDER_TYPE_LIMIT} or {self.ORDER_TYPE_MARKET} expected, got {buy_order_type}"
-                "for buy_order_type"
-            )
-        if buy_order_type == self.ORDER_TYPE_MARKET:
-            raise Exception(
-                "Market buys are reported to do extreme losses, they are disabled right now,"
-                "comment this line only if you know what you're doing"
-            )
-        self.BUY_ORDER_TYPE = order_type_map[buy_order_type]

@@ -222,7 +222,9 @@ class DepthCacheManager:
         if data["final_update_id_in_event"] <= self.last_update_id:
             return  # ignore
         if data["first_update_id_in_event"] > self.last_update_id + 1:
-            print(f"{self.symbol}: reinit again {data['first_update_id_in_event'] - self.last_update_id}")
+            self.logger.debug(
+                f"OB: {self.symbol} reinit, update delta: {data['first_update_id_in_event'] - self.last_update_id}"
+            )
             await self.reinit()
             return
         self.apply_orders(data)
@@ -264,10 +266,10 @@ class DepthCacheManager:
 
     async def process_signal(self, signal):
         if signal["type"] == "CONNECT":
-            print(f"Connect {self.symbol}")
+            self.logger.debug(f"OB: CONNECT arrived for symbol {self.symbol}")
             await self.reinit()
         elif signal["type"] == "DISCONNECT":
-            print("Disconnect")
+            self.logger.debug(f"OB: DISCONNECT arrived for symbol {self.symbol}")
             self.depth_cache.clear()
         self.pending_signals_counter -= 1
         assert self.pending_signals_counter >= 0
@@ -316,6 +318,8 @@ class AsyncListenerContext:
         amount = 0.0
         unfilled_quote = quote
         filled = False
+        if abs(quote) <= 1e-15:
+            return 0.0, 0.0
         for (price, bid_amount) in reversed(depth_cache.bids.items()):
             curr_amount = unfilled_quote / price
             fill = min(bid_amount, curr_amount)
@@ -333,6 +337,8 @@ class AsyncListenerContext:
         quote = 0.0
         unfilled_amount = amount
         filled = False
+        if abs(amount) <= 1e-15:
+            return 0.0, 0.0
         for (price, bid_amount) in reversed(depth_cache.bids.items()):
             fill = min(bid_amount, unfilled_amount)
             quote += price * fill
@@ -349,6 +355,8 @@ class AsyncListenerContext:
         amount = 0.0
         unfilled_quote = quote_amount
         filled = False
+        if abs(quote_amount) <= 1e-15:
+            return 0.0, 0.0
         for (price, ask_amount) in depth_cache.asks.items():
             curr_amount = unfilled_quote / price
             fill = min(curr_amount, ask_amount)
@@ -618,14 +626,14 @@ class BinanceStreamManager(threading.Thread):
 
     def get_market_sell_price(self, symbol: str, amount: float):
         if self.async_context is None:
-            return None
+            return None, None
         return asyncio.run_coroutine_threadsafe(
             self.async_context.get_market_sell_price(symbol, amount), self.async_context.loop
         ).result()
 
     def get_market_buy_price(self, symbol: str, quote_amount: float):
         if self.async_context is None:
-            return None
+            return None, None
         return asyncio.run_coroutine_threadsafe(
             self.async_context.get_market_buy_price(symbol, quote_amount), self.async_context.loop
         ).result()
@@ -635,7 +643,7 @@ class BinanceStreamManager(threading.Thread):
 
     def get_market_sell_price_fill_quote(self, symbol: str, quote_amount: float):
         if self.async_context is None:
-            return None
+            return None, None
         return asyncio.run_coroutine_threadsafe(
             self.async_context.get_market_sell_price_fill_quote(symbol, quote_amount), self.async_context.loop
         ).result()

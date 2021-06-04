@@ -5,12 +5,12 @@ from typing import Dict
 
 from sqlitedict import SqliteDict
 
-from .binance_api_manager import BinanceAPIManager
-from .binance_stream_manager import BinanceOrder
+from .binance_api_manager import BinanceAPIManager, BinanceOrderBalanceManager
+from .binance_stream_manager import BinanceCache, BinanceOrder
 from .config import Config
 from .database import Database
 from .logger import Logger
-from .models import Coin, Pair
+from .models import Coin, Pair, ScoutHistory
 from .strategies import get_strategy
 
 cache = SqliteDict("data/backtest_cache.db")
@@ -19,16 +19,30 @@ cache = SqliteDict("data/backtest_cache.db")
 class MockBinanceManager(BinanceAPIManager):
     def __init__(
         self,
+        client: Client,
+        binance_cache: BinanceCache,
         config: Config,
         db: Database,
         logger: Logger,
         start_date: datetime = None,
         start_balances: Dict[str, float] = None,
     ):
-        super().__init__(config, db, logger)
+        super().__init__(
+            client, binance_cache, config, db, logger, BinanceOrderBalanceManager(logger, client, binance_cache)
+        )
         self.config = config
         self.datetime = start_date or datetime(2021, 1, 1)
         self.balances = start_balances or {config.BRIDGE.symbol: 100}
+        self.non_existing_pairs = set()
+        self.reinit_trader_callback = None
+
+    def set_reinit_trader_callback(self, reinit_trader_callback):
+        self.reinit_trader_callback = reinit_trader_callback
+
+    def set_coins(self, coins_list: List[str]):
+        self.db.set_coins(coins_list)
+        if self.reinit_trader_callback is not None:
+            self.reinit_trader_callback()
 
     def setup_websockets(self):
         pass  # No websockets are needed for backtesting
@@ -37,7 +51,7 @@ class MockBinanceManager(BinanceAPIManager):
         self.datetime += timedelta(minutes=interval)
 
     def get_fee(self, origin_coin: Coin, target_coin: Coin, selling: bool):
-        return 0.0075
+        return 0.001
 
     def get_ticker_price(self, ticker_symbol: str):
         """
@@ -50,17 +64,27 @@ class MockBinanceManager(BinanceAPIManager):
             end_date = self.datetime + timedelta(minutes=1000)
             if end_date > datetime.now():
                 end_date = datetime.now()
-            end_date = end_date.strftime("%d %b %Y %H:%M:%S")
+            end_date_str = end_date.strftime("%d %b %Y %H:%M:%S")
             self.logger.info(f"Fetching prices for {ticker_symbol} between {self.datetime} and {end_date}")
-            for result in self.binance_client.get_historical_klines(
-                ticker_symbol, "1m", target_date, end_date, limit=1000
-            ):
+            historical_klines = self.binance_client.get_historical_klines(
+                ticker_symbol, "1m", target_date, end_date_str, limit=1000
+            )
+            no_data_cur_date = self.datetime
+            no_data_end_date = (
+                end_date
+                if len(historical_klines) == 0
+                else (datetime.utcfromtimestamp(historical_klines[0][0] / 1000) - timedelta(minutes=1))
+            )
+            while no_data_cur_date <= no_data_end_date:
+                cache[f"{ticker_symbol} - {no_data_cur_date.strftime('%d %b %Y %H:%M:%S')}"] = 0.0
+                no_data_cur_date += timedelta(minutes=1)
+            for result in historical_klines:
                 date = datetime.utcfromtimestamp(result[0] / 1000).strftime("%d %b %Y %H:%M:%S")
                 price = float(result[1])
                 cache[f"{ticker_symbol} - {date}"] = price
             cache.commit()
             val = cache.get(key, None)
-        return val
+        return val if val != 0.0 else None
 
     def get_currency_balance(self, currency_symbol: str, force=False):
         """
@@ -68,12 +92,25 @@ class MockBinanceManager(BinanceAPIManager):
         """
         return self.balances.get(currency_symbol, 0)
 
+    def get_market_sell_price(self, symbol: str, amount: float) -> (float, float):
+        price = self.get_ticker_price(symbol)
+        return (price, amount * price) if price is not None else (None, None)
+
+    def get_market_buy_price(self, symbol: str, quote_amount: float) -> (float, float):
+        price = self.get_ticker_price(symbol)
+        return (price, quote_amount / price) if price is not None else (None, None)
+
+    def get_market_sell_price_fill_quote(self, symbol: str, quote_amount: float) -> (float, float):
+        price = self.get_ticker_price(symbol)
+        return (price, quote_amount / price) if price is not None else (None, None)
+
     def buy_alt(self, origin_coin: Coin, target_coin: Coin, buy_price: float):
         origin_symbol = origin_coin.symbol
         target_symbol = target_coin.symbol
 
         target_balance = self.get_currency_balance(target_symbol)
         from_coin_price = self.get_ticker_price(origin_symbol + target_symbol)
+        assert abs(buy_price - from_coin_price) < 1e-15 or buy_price == 0.0
 
         order_quantity = self._buy_quantity(origin_symbol, target_symbol, target_balance, from_coin_price)
         target_quantity = order_quantity * from_coin_price
@@ -101,6 +138,7 @@ class MockBinanceManager(BinanceAPIManager):
 
         origin_balance = self.get_currency_balance(origin_symbol)
         from_coin_price = self.get_ticker_price(origin_symbol + target_symbol)
+        assert abs(sell_price - from_coin_price) < 1e-15
 
         order_quantity = self._sell_quantity(origin_symbol, target_symbol, origin_balance)
         target_quantity = order_quantity * from_coin_price
@@ -126,7 +164,13 @@ class MockBinanceManager(BinanceAPIManager):
                     continue
                 total += balance / price
             else:
-                price = self.get_ticker_price(coin + target_symbol)
+                if coin + target_symbol in self.non_existing_pairs:
+                    continue
+                price = None
+                try:
+                    price = self.get_ticker_price(coin + target_symbol)
+                except binance.client.BinanceAPIException:
+                    self.non_existing_pairs.add(coin + target_symbol)
                 if price is None:
                     continue
                 total += price * balance
@@ -138,6 +182,9 @@ class MockDatabase(Database):
         super().__init__(logger, config, "sqlite:///")
 
     def log_scout(self, pair: Pair, target_ratio: float, current_coin_price: float, other_coin_price: float):
+        pass
+
+    def batch_log_scout(self, logs: List[ScoutHistory]):
         pass
 
 
@@ -170,7 +217,15 @@ def backtest(
     db = MockDatabase(logger, config)
     db.create_database()
     db.set_coins(config.SUPPORTED_COIN_LIST)
-    manager = MockBinanceManager(config, db, logger, start_date, start_balances)
+    manager = MockBinanceManager(
+        Client(config.BINANCE_API_KEY, config.BINANCE_API_SECRET_KEY, tld=config.BINANCE_TLD),
+        BinanceCache(),
+        config,
+        db,
+        logger,
+        start_date,
+        start_balances,
+    )
 
     starting_coin = db.get_coin(starting_coin or config.SUPPORTED_COIN_LIST[0])
     if manager.get_currency_balance(starting_coin.symbol) == 0:

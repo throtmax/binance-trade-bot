@@ -1,3 +1,4 @@
+import contextlib
 import json
 import os
 import time
@@ -45,6 +46,11 @@ class Database:
         session.commit()
         session.close()
 
+    def manage_session(self, session=None):
+        if session is None:
+            return self.db_session()
+        return contextlib.nullcontext(session)
+
     def set_coins(self, symbols: List[str]):
         session: Session
 
@@ -86,11 +92,11 @@ class Database:
             session.expunge_all()
             return coins
 
-    def get_coin(self, coin: Union[Coin, str]) -> Coin:
+    def get_coin(self, coin: Union[Coin, str], external_session=None) -> Coin:
         if isinstance(coin, Coin):
             return coin
-        session: Session
-        with self.db_session() as session:
+        external_session: Session
+        with self.manage_session(external_session) as session:
             coin = session.query(Coin).get(coin)
             session.expunge(coin)
             return coin
@@ -124,10 +130,10 @@ class Database:
             session.expunge(pair)
             return pair
 
-    def get_pairs_from(self, from_coin: Union[Coin, str], only_enabled=True) -> List[Pair]:
-        from_coin = self.get_coin(from_coin)
-        session: Session
-        with self.db_session() as session:
+    def get_pairs_from(self, from_coin: Union[Coin, str], only_enabled=True, external_session=None) -> List[Pair]:
+        from_coin = self.get_coin(from_coin, external_session)
+        external_session: Session
+        with self.manage_session(external_session) as session:
             pairs = session.query(Pair).filter(Pair.from_coin == from_coin)
             if only_enabled:
                 pairs = pairs.filter(Pair.enabled.is_(True))

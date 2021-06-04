@@ -1,4 +1,3 @@
-import time
 from datetime import datetime
 
 from binance_trade_bot.auto_trader import AutoTrader
@@ -32,8 +31,6 @@ class Strategy(AutoTrader):
                 end="\r",
             )
 
-            t1 = time.monotonic_ns()
             self._jump_to_best_coin(coin, coin_price, quote_amount, current_coin_balance)
-            print(f"Jump took {time.monotonic_ns() - t1}")
 
         self.bridge_scout()

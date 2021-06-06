@@ -1,12 +1,13 @@
 import asyncio
+import concurrent.futures
 import threading
 import uuid
 from collections import deque
 from contextlib import asynccontextmanager, contextmanager, suppress
-from typing import Callable, Dict, List, Optional, Set, Tuple, Union
+from typing import Callable, Dict, List, Optional, Set, Union
 
 import binance.client
-from binance.exceptions import BinanceAPIException, BinanceRequestException
+from binance.exceptions import BinanceAPIException
 from sortedcontainers import SortedDict
 from unicorn_binance_websocket_api import BinanceWebSocketApiManager
 
@@ -50,19 +51,18 @@ class ThreadSafeAsyncLock:
 
 class BinanceOrder:  # pylint: disable=too-few-public-methods
     def __init__(self, report):
-        self.event = report
         self.symbol = report["symbol"]
         self.side = report["side"]
-        self.order_type = report["order_type"]
-        self.id = report["order_id"]
-        self.cumulative_quote_qty = float(report["cumulative_quote_asset_transacted_quantity"])
-        self.status = report["current_order_status"]
-        self.price = float(report["order_price"])
-        self.time = report["transaction_time"]
-        self.cumulative_filled_quantity = float(report["cumulative_filled_quantity"])
+        self.order_type = report["type"]
+        self.id = report["orderId"]
+        self.cumulative_quote_qty = float(report["cummulativeQuoteQty"])
+        self.status = report["status"]
+        self.price = float(report["price"])
+        self.time = report["transactTime"]
+        self.cumulative_filled_quantity = float(report["executedQty"])
 
     def __repr__(self):
-        return f"<BinanceOrder {self.event}>"
+        return f"<BinanceOrder {self.__dict__}>"
 
 
 class BinanceCache:  # pylint: disable=too-few-public-methods
@@ -71,7 +71,7 @@ class BinanceCache:  # pylint: disable=too-few-public-methods
         self._balances: Dict[str, float] = {}
         self._balances_mutex: ThreadSafeAsyncLock = ThreadSafeAsyncLock()
         self.non_existent_tickers: Set[str] = set()
-        self.orders: Dict[str, BinanceOrder] = {}
+        self.balances_changed_event = threading.Event()
 
     def attach_loop(self):
         self._balances_mutex.attach_loop()
@@ -255,7 +255,7 @@ class DepthCacheManager:
         while True:
             try:
                 res = await self.client.get_order_book(symbol=self.symbol, limit=self.limit)
-            except binance.exceptions.BinanceAPIException as e:
+            except BinanceAPIException as e:
                 self.logger.error(f"Error while fetching snapshot of order book: {e}")
                 await asyncio.sleep(0.5)
             else:
@@ -285,8 +285,6 @@ class AsyncListenerContext:
         cache: BinanceCache,
         logger: Logger,
         client: binance.AsyncClient,
-        pending_orders: Set[Tuple[str, int]],
-        pending_orders_mutex: ThreadSafeAsyncLock,
         depth_cache_managers: Dict[str, DepthCacheManager],
     ):
         self.queues: Dict[str, asyncio.Queue] = {name: asyncio.Queue() for name in buffer_names}
@@ -297,10 +295,7 @@ class AsyncListenerContext:
         self.resolver = None
         self.stopped = False
         self.client = client
-        self.pending_orders = pending_orders
-        self.pending_orders_mutex = pending_orders_mutex
         self.depth_cache_managers = depth_cache_managers
-        # self.depth_cache_managers =
 
     def attach_stream_uuid_resolver(self, resolver: Callable[[uuid.UUID], str]):
         self.resolver = resolver
@@ -464,60 +459,30 @@ class UserDataListener(AsyncListener):
     async def handle_data(self, data):
         if "event_type" in data:
             event_type = data["event_type"]
-            if event_type == "executionReport":
-                self.async_context.logger.debug(f"execution report: {data}")
-                order = BinanceOrder(data)
-                self.async_context.cache.orders[order.id] = order
-            elif event_type == "balanceUpdate":
+            # We ignore execution reports because market orders are always filled
+            if event_type == "balanceUpdate":
                 self.async_context.logger.debug(f"Balance update: {data}")
                 async with self.async_context.cache.open_balances_async() as balances:
                     asset = data["asset"]
                     if asset in balances:
                         del balances[data["asset"]]
+                    self.async_context.cache.balances_changed_event.set()
             elif event_type in ("outboundAccountPosition", "outboundAccountInfo"):
                 self.async_context.logger.debug(f"{event_type}: {data}")
                 async with self.async_context.cache.open_balances_async() as balances:
                     for bal in data["balances"]:
                         balances[bal["asset"]] = float(bal["free"])
-
-    async def _fetch_pending_orders(self):
-        pending_orders: Set[Tuple[str, int]]
-        async with self.async_context.pending_orders_mutex:
-            pending_orders = self.async_context.pending_orders.copy()
-        for (symbol, order_id) in pending_orders:
-            order = None
-            while True:
-                try:
-                    order = await self.async_context.client.get_order(symbol=symbol, orderId=order_id)
-                except (BinanceRequestException, BinanceAPIException) as e:
-                    self.async_context.logger.error(f"Got exception during fetching pending order: {e}")
-                if order is not None:
-                    break
-                await asyncio.sleep(1)
-            fake_report = {
-                "symbol": order["symbol"],
-                "side": order["side"],
-                "order_type": order["type"],
-                "order_id": order["orderId"],
-                "cumulative_quote_asset_transacted_quantity": float(order["cummulativeQuoteQty"]),
-                "current_order_status": order["status"],
-                "order_price": float(order["price"]),
-                "transaction_time": order["time"],
-            }
-            self.async_context.logger.info(
-                f"Pending order {order_id} for symbol {symbol} fetched:\n{fake_report}", False
-            )
-            self.async_context.cache.orders[fake_report["order_id"]] = BinanceOrder(fake_report)
+                    self.async_context.cache.balances_changed_event.set()
 
     async def _invalidate_balances(self):
         async with self.async_context.cache.open_balances_async() as balances:
             balances.clear()
+            self.async_context.cache.balances_changed_event.set()
 
     async def handle_signal(self, signal):
         signal_type = signal["type"]
         if signal_type == "CONNECT":
             self.async_context.logger.debug("Connect for userdata arrived", False)
-            await self._fetch_pending_orders()
             await self._invalidate_balances()
 
 
@@ -537,103 +502,25 @@ class DepthListener(AsyncListener):
             asyncio.create_task(dcm.process_signal(signal))
 
 
-class OrderGuard:
-    def __init__(self, pending_orders: Set[Tuple[str, int]], mutex: ThreadSafeAsyncLock):
-        self.pending_orders = pending_orders
-        self.mutex = mutex
-        # lock immediately because OrderGuard
-        # should be entered and put tag that shouldn't be missed
-        self.mutex.acquire()
-        self.tag = None
-
-    def set_order(self, origin_symbol: str, target_symbol: str, order_id: int):
-        self.tag = (origin_symbol + target_symbol, order_id)
-
-    def __enter__(self):
-        try:
-            if self.tag is None:
-                raise Exception("OrderGuard wasn't properly set")
-            self.pending_orders.add(self.tag)
-        finally:
-            self.mutex.release()
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.pending_orders.remove(self.tag)
-
-
-class BinanceStreamManager(threading.Thread):
-    def __init__(self, cache: BinanceCache, config: Config, logger: Logger):
-        super().__init__()
-        self.cache = cache
-        self.config = config
+class BinanceStreamManager:
+    def __init__(
+        self,
+        logger: Logger,
+        async_context: AsyncListenerContext,
+        bwam: AsyncListenedBWAM,
+        execution_thread: threading.Thread,
+    ):
         self.logger = logger
-        self.bwam: Optional[AsyncListenedBWAM] = None
-        self.async_context: Optional[AsyncListenerContext] = None
-
-        self.pending_orders: Set[Tuple[str, int]] = set()
-        self.pending_orders_mutex: ThreadSafeAsyncLock = ThreadSafeAsyncLock()
-
-    async def arun(self):
-        self.cache.attach_loop()
-        self.pending_orders_mutex.attach_loop()
-        client = await binance.AsyncClient.create(
-            self.config.BINANCE_API_KEY, self.config.BINANCE_API_SECRET_KEY, tld=self.config.BINANCE_TLD
-        )
-        depth_markets = [coin.lower() + self.config.BRIDGE.symbol.lower() for coin in self.config.SUPPORTED_COIN_LIST]
-        depth_cache_managers = {
-            symbol.upper(): DepthCacheManager(symbol.upper(), client, self.logger) for symbol in depth_markets
-        }
-        self.async_context = AsyncListenerContext(
-            [BUFFER_NAME_MINITICKERS, BUFFER_NAME_USERDATA, BUFFER_NAME_DEPTH],
-            self.cache,
-            self.logger,
-            client,
-            self.pending_orders,
-            self.pending_orders_mutex,
-            depth_cache_managers,
-        )
-        self.bwam = AsyncListenedBWAM(
-            self.async_context,
-            output_default="UnicornFy",
-            enable_stream_signal_buffer=True,
-            exchange=f"binance.{self.config.BINANCE_TLD}",
-        )
-        quotes = set(map(str.lower, [self.config.BRIDGE.symbol, "usdt", "btc", "bnb"]))
-        markets = [coin.lower() + quote for quote in quotes for coin in self.config.SUPPORTED_COIN_LIST]
-        self.bwam.create_stream(["miniTicker"], markets, stream_buffer_name=BUFFER_NAME_MINITICKERS)
-        self.bwam.create_stream(
-            ["arr"],
-            ["!userData"],
-            api_key=self.config.BINANCE_API_KEY,
-            api_secret=self.config.BINANCE_API_SECRET_KEY,
-            stream_buffer_name=BUFFER_NAME_USERDATA,
-        )
-
-        self.bwam.create_stream(["depth@100ms"], depth_markets, stream_buffer_name=BUFFER_NAME_DEPTH)
-        listeners = [
-            TickerListener(self.async_context),
-            UserDataListener(self.async_context),
-            DepthListener(self.async_context, depth_cache_managers),
-        ]
-        await asyncio.gather(*[listener.run_loop() for listener in listeners])
-
-    def run(self) -> None:
-        with suppress(asyncio.CancelledError):
-            asyncio.run(self.arun())
-
-    def acquire_order_guard(self):
-        return OrderGuard(self.pending_orders, self.pending_orders_mutex)
+        self.bwam: AsyncListenedBWAM = bwam
+        self.async_context: AsyncListenerContext = async_context
+        self.execution_thread = execution_thread
 
     def get_market_sell_price(self, symbol: str, amount: float):
-        if self.async_context is None:
-            return None, None
         return asyncio.run_coroutine_threadsafe(
             self.async_context.get_market_sell_price(symbol, amount), self.async_context.loop
         ).result()
 
     def get_market_buy_price(self, symbol: str, quote_amount: float):
-        if self.async_context is None:
-            return None, None
         return asyncio.run_coroutine_threadsafe(
             self.async_context.get_market_buy_price(symbol, quote_amount), self.async_context.loop
         ).result()
@@ -642,8 +529,69 @@ class BinanceStreamManager(threading.Thread):
         self.bwam.stop_manager_with_all_streams()
 
     def get_market_sell_price_fill_quote(self, symbol: str, quote_amount: float):
-        if self.async_context is None:
-            return None, None
         return asyncio.run_coroutine_threadsafe(
             self.async_context.get_market_sell_price_fill_quote(symbol, quote_amount), self.async_context.loop
         ).result()
+
+
+class StreamManagerWorker(threading.Thread):
+    def __init__(self, cache: BinanceCache, config: Config, logger: Logger, fut: concurrent.futures.Future):
+        super().__init__()
+        self.cache = cache
+        self.config = config
+        self.logger = logger
+        self.fut = fut
+
+    async def arun(self):
+        self.cache.attach_loop()
+        client = await binance.AsyncClient.create(
+            self.config.BINANCE_API_KEY, self.config.BINANCE_API_SECRET_KEY, tld=self.config.BINANCE_TLD
+        )
+        depth_markets = [coin.lower() + self.config.BRIDGE.symbol.lower() for coin in self.config.SUPPORTED_COIN_LIST]
+        depth_cache_managers = {
+            symbol.upper(): DepthCacheManager(symbol.upper(), client, self.logger) for symbol in depth_markets
+        }
+        async_context = AsyncListenerContext(
+            [BUFFER_NAME_MINITICKERS, BUFFER_NAME_USERDATA, BUFFER_NAME_DEPTH],
+            self.cache,
+            self.logger,
+            client,
+            depth_cache_managers,
+        )
+        bwam = AsyncListenedBWAM(
+            async_context,
+            output_default="UnicornFy",
+            enable_stream_signal_buffer=True,
+            exchange=f"binance.{self.config.BINANCE_TLD}",
+        )
+        quotes = set(map(str.lower, [self.config.BRIDGE.symbol, "usdt", "btc", "bnb"]))
+        markets = [coin.lower() + quote for quote in quotes for coin in self.config.SUPPORTED_COIN_LIST]
+        bwam.create_stream(["miniTicker"], markets, stream_buffer_name=BUFFER_NAME_MINITICKERS)
+        bwam.create_stream(
+            ["arr"],
+            ["!userData"],
+            api_key=self.config.BINANCE_API_KEY,
+            api_secret=self.config.BINANCE_API_SECRET_KEY,
+            stream_buffer_name=BUFFER_NAME_USERDATA,
+        )
+
+        bwam.create_stream(["depth@100ms"], depth_markets, stream_buffer_name=BUFFER_NAME_DEPTH)
+        listeners = [
+            TickerListener(async_context),
+            UserDataListener(async_context),
+            DepthListener(async_context, depth_cache_managers),
+        ]
+        stream_manager = BinanceStreamManager(self.logger, async_context, bwam, self)
+        self.fut.set_result(stream_manager)
+        await asyncio.gather(*[listener.run_loop() for listener in listeners])
+
+    def run(self):
+        with suppress(asyncio.CancelledError):
+            asyncio.run(self.arun())
+
+    @staticmethod
+    def create(cache: BinanceCache, config: Config, logger: Logger) -> BinanceStreamManager:
+        fut = concurrent.futures.Future()
+        execution_thread = StreamManagerWorker(cache, config, logger, fut)
+        execution_thread.start()
+        return fut.result()

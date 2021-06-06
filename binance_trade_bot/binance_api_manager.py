@@ -3,13 +3,12 @@ import time
 import traceback
 from abc import ABC, abstractmethod
 from collections import defaultdict
-from typing import Dict, Optional
+from typing import Callable, Dict, Optional
 
 from binance.client import Client
-from binance.exceptions import BinanceAPIException
 from cachetools import TTLCache, cached
 
-from .binance_stream_manager import BinanceCache, BinanceOrder, BinanceStreamManager, OrderGuard
+from .binance_stream_manager import BinanceCache, BinanceOrder, BinanceStreamManager, StreamManagerWorker
 from .config import Config
 from .database import Database
 from .logger import Logger
@@ -64,20 +63,20 @@ class PaperOrderBalanceManager(AbstractOrderBalanceManager):
         else:
             self.balances[self.bridge] = self.get_currency_balance(self.bridge) - quote_quantity
             self.balances[symbol_base] = self.get_currency_balance(symbol_base) + quantity * 0.999
+        self.cache.balances_changed_event.set()
         super().make_order(side, symbol, quantity, quote_quantity)
 
         self.fake_order_id += 1
-        order = self.cache.orders[str(self.fake_order_id)] = BinanceOrder(
-            defaultdict(
-                lambda: "",
-                order_id=str(self.fake_order_id),
-                current_order_status="FILLED",
-                cumulative_filled_quantity=str(quantity),
-                cumulative_quote_asset_transacted_quantity=str(quote_quantity),
-                order_price="0",
-            )
+        return defaultdict(
+            lambda: "",
+            orderId=str(self.fake_order_id),
+            status="FILLED",
+            executedQty=str(quantity),
+            cummulativeQuoteQty=str(quote_quantity),
+            price="0",
+            side=side,
+            type=Client.ORDER_TYPE_MARKET,
         )
-        return {"executedQty": "0", "status": "FILLED", "orderId": order.id}
 
 
 class BinanceOrderBalanceManager(AbstractOrderBalanceManager):
@@ -122,54 +121,52 @@ class BinanceAPIManager:
         logger: Logger,
         order_balance_manager: AbstractOrderBalanceManager,
     ):
-        # initializing the client class calls `ping` API endpoint, verifying the connection
         self.binance_client = client
         self.db = db
         self.logger = logger
         self.config = config
-
         self.cache = cache
         self.order_balance_manager = order_balance_manager
-        self.stream_manager: BinanceStreamManager = BinanceStreamManager(
-            self.cache,
-            self.config,
-            self.logger,
-        )
+        self.stream_manager: Optional[BinanceStreamManager] = None
         self.setup_websockets()
 
     @staticmethod
-    def create_manager(config: Config, db: Database, logger: Logger):
+    def _common_factory(
+        config: Config,
+        db: Database,
+        logger: Logger,
+        ob_factory: Callable[[Client, BinanceCache], AbstractOrderBalanceManager],
+    ) -> "BinanceAPIManager":
         cache = BinanceCache()
+        # initializing the client class calls `ping` API endpoint, verifying the connection
         client = Client(
             config.BINANCE_API_KEY,
             config.BINANCE_API_SECRET_KEY,
             tld=config.BINANCE_TLD,
         )
-        return BinanceAPIManager(client, cache, config, db, logger, BinanceOrderBalanceManager(logger, client, cache))
+        return BinanceAPIManager(client, cache, config, db, logger, ob_factory(client, cache))
+
+    @staticmethod
+    def create_manager(config: Config, db: Database, logger: Logger) -> "BinanceAPIManager":
+        return BinanceAPIManager._common_factory(
+            config, db, logger, lambda client, cache: BinanceOrderBalanceManager(logger, client, cache)
+        )
 
     @staticmethod
     def create_manager_paper_trading(
         config: Config, db: Database, logger: Logger, initial_balances: Optional[Dict[str, float]] = None
-    ):
-        if initial_balances is None:
-            initial_balances = {config.BRIDGE.symbol: 100.0}
-        cache = BinanceCache()
-        client = Client(
-            config.BINANCE_API_KEY,
-            config.BINANCE_API_SECRET_KEY,
-            tld=config.BINANCE_TLD,
-        )
-        return BinanceAPIManager(
-            client,
-            cache,
+    ) -> "BinanceAPIManager":
+        return BinanceAPIManager._common_factory(
             config,
             db,
             logger,
-            PaperOrderBalanceManager(config.BRIDGE.symbol, client, cache, initial_balances),
+            lambda client, cache: PaperOrderBalanceManager(
+                config.BRIDGE.symbol, client, cache, initial_balances or {config.BRIDGE.symbol: 100.0}
+            ),
         )
 
     def setup_websockets(self):
-        self.stream_manager.start()
+        self.stream_manager = StreamManagerWorker.create(self.cache, self.config, self.logger)
 
     @cached(cache=TTLCache(maxsize=1, ttl=43200))
     def get_trade_fees(self) -> Dict[str, float]:
@@ -245,16 +242,14 @@ class BinanceAPIManager:
         return self.order_balance_manager.get_currency_balance(currency_symbol, force)
 
     def retry(self, func, *args, **kwargs):
-        time.sleep(1)
-        attempts = 0
-        while attempts < 20:
+        for attempt in range(20):
             try:
                 return func(*args, **kwargs)
             except Exception:  # pylint: disable=broad-except
-                self.logger.warning(f"Failed to Buy/Sell. Trying Again (attempt {attempts}/20)")
-                if attempts == 0:
+                self.logger.warning(f"Failed to Buy/Sell. Trying Again (attempt {attempt}/20)")
+                if attempt == 0:
                     self.logger.warning(traceback.format_exc())
-                attempts += 1
+            time.sleep(1)
         return None
 
     def get_symbol_filter(self, origin_symbol: str, target_symbol: str, filter_type: str):
@@ -274,31 +269,6 @@ class BinanceAPIManager:
     @cached(cache=TTLCache(maxsize=2000, ttl=43200))
     def get_min_notional(self, origin_symbol: str, target_symbol: str):
         return float(self.get_symbol_filter(origin_symbol, target_symbol, "MIN_NOTIONAL")["minNotional"])
-
-    def _wait_for_order(self, order_id) -> Optional[BinanceOrder]:  # pylint: disable=unsubscriptable-object
-        while True:
-            order_status: BinanceOrder = self.cache.orders.get(order_id, None)
-            if order_status is not None:
-                break
-            self.logger.debug(f"Waiting for order {order_id} to be created")
-            time.sleep(1)
-
-        self.logger.debug(f"Order created: {order_status}")
-
-        while order_status.status != "FILLED":
-            order_status = self.cache.orders.get(order_id, None)
-            if order_status.status != "FILLED":
-                self.logger.debug(f"Waiting for order {order_id} to be filled")
-                time.sleep(1)
-
-        self.logger.debug(f"Order filled: {order_status}")
-        return order_status
-
-    def wait_for_order(
-        self, order_id, order_guard: OrderGuard
-    ) -> Optional[BinanceOrder]:  # pylint: disable=unsubscriptable-object
-        with order_guard:
-            return self._wait_for_order(order_id)
 
     def buy_alt(self, origin_coin: Coin, target_coin: Coin, buy_price: float) -> BinanceOrder:
         return self.retry(self._buy_alt, origin_coin, target_coin, buy_price)
@@ -331,35 +301,20 @@ class BinanceAPIManager:
         order_quantity = self._buy_quantity(origin_symbol, target_symbol, target_balance, from_coin_price)
         self.logger.info(f"BUY QTY {order_quantity} of <{origin_symbol}>")
 
-        # Try to buy until successful
-        order = None
-        order_guard = self.stream_manager.acquire_order_guard()
-        while order is None:
-            try:
-                order = self.order_balance_manager.make_order(
-                    side=Client.SIDE_BUY,
-                    symbol=origin_symbol + target_symbol,
-                    quantity=order_quantity,
-                    quote_quantity=target_balance,
-                )
-                self.logger.info(order)
-            except BinanceAPIException as e:
-                self.logger.info(e)
-                time.sleep(1)
-            except Exception as e:  # pylint: disable=broad-except
-                self.logger.warning(f"Unexpected Error: {e}")
+        order = self.order_balance_manager.make_order(
+            side=Client.SIDE_BUY,
+            symbol=origin_symbol + target_symbol,
+            quantity=order_quantity,
+            quote_quantity=target_balance,
+        )
+        self.logger.info(order)
+        order = BinanceOrder(order)
 
-        executed_qty = float(order.get("executedQty", 0))
-        if executed_qty > 0 and order["status"] == "FILLED":
+        executed_qty = order.cumulative_filled_quantity
+        if executed_qty > 0 and order.status == "FILLED":
             order_quantity = executed_qty  # Market buys provide QTY of actually bought asset
 
         trade_log.set_ordered(origin_balance, target_balance, order_quantity)
-
-        order_guard.set_order(origin_symbol, target_symbol, int(order["orderId"]))
-        order = self.wait_for_order(order["orderId"], order_guard)
-
-        if order is None:
-            return None
 
         self.logger.info(f"Bought {origin_symbol}")
 
@@ -397,37 +352,23 @@ class BinanceAPIManager:
         self.logger.info(f"Selling {order_quantity} of {origin_symbol}")
 
         self.logger.info(f"Balance is {origin_balance}")
-        order = None
-        order_guard = self.stream_manager.acquire_order_guard()
-        while order is None:
-            try:
-                order = self.order_balance_manager.make_order(
-                    side=Client.SIDE_SELL,
-                    symbol=origin_symbol + target_symbol,
-                    quantity=order_quantity,
-                    quote_quantity=from_coin_price * order_quantity,
-                )
-                self.logger.info(order)
-            except BinanceAPIException as e:
-                self.logger.info(e)
-                time.sleep(1)
-            except Exception as e:  # pylint: disable=broad-except
-                self.logger.warning(f"Unexpected Error: {e}")
-
-        self.logger.info("order")
+        order = self.order_balance_manager.make_order(
+            side=Client.SIDE_SELL,
+            symbol=origin_symbol + target_symbol,
+            quantity=order_quantity,
+            quote_quantity=from_coin_price * order_quantity,
+        )
         self.logger.info(order)
+        order = BinanceOrder(order)
 
         trade_log.set_ordered(origin_balance, target_balance, order_quantity)
 
-        order_guard.set_order(origin_symbol, target_symbol, int(order["orderId"]))
-        order = self.wait_for_order(order["orderId"], order_guard)
-
-        if order is None:
-            return None
-
         new_balance = self.get_currency_balance(origin_symbol)
         while new_balance >= origin_balance:
-            new_balance = self.get_currency_balance(origin_symbol, True)
+            # wait at most for 1s to receive websockets update on balances, otherwise should force-fetch balances
+            balances_changed = self.cache.balances_changed_event.wait(1.0)
+            self.cache.balances_changed_event.clear()
+            new_balance = self.get_currency_balance(origin_symbol, force=(not balances_changed))
 
         self.logger.info(f"Sold {origin_symbol}")
 

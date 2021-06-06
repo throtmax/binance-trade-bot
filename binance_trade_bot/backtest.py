@@ -1,8 +1,10 @@
 from collections import defaultdict
 from datetime import datetime, timedelta
 from traceback import format_exc
-from typing import Dict
+from typing import Dict, List
 
+import binance.client
+from binance import Client
 from sqlitedict import SqliteDict
 
 from .binance_api_manager import BinanceAPIManager, BinanceOrderBalanceManager
@@ -229,7 +231,7 @@ def backtest(
 
     starting_coin = db.get_coin(starting_coin or config.SUPPORTED_COIN_LIST[0])
     if manager.get_currency_balance(starting_coin.symbol) == 0:
-        manager.buy_alt(starting_coin, config.BRIDGE, 0.0)  # doesn't matter mocking manager don't look at fixed price
+        manager.buy_alt(starting_coin, config.BRIDGE, 0.0)
     db.set_current_coin(starting_coin)
 
     strategy = get_strategy(config.STRATEGY)
@@ -239,6 +241,7 @@ def backtest(
     trader = strategy(manager, db, logger, config)
     trader.initialize()
 
+    manager.set_reinit_trader_callback(trader.initialize)
     yield manager
 
     n = 1

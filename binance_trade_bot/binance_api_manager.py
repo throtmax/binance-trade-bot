@@ -309,9 +309,6 @@ class BinanceAPIManager:
         origin_symbol = origin_coin
         target_symbol = target_coin
 
-        with self.cache.open_balances() as balances:
-            balances.clear()
-
         origin_balance = self.get_currency_balance(origin_symbol)
         target_balance = self.get_currency_balance(target_symbol)
         from_coin_price = buy_price
@@ -358,10 +355,6 @@ class BinanceAPIManager:
         """
         origin_symbol = origin_coin
         target_symbol = target_coin
-
-        # get fresh balances
-        with self.cache.open_balances() as balances:
-            balances.clear()
 
         origin_balance = self.get_currency_balance(origin_symbol)
         target_balance = self.get_currency_balance(target_symbol)

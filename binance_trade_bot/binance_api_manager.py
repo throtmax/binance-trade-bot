@@ -12,7 +12,6 @@ from .binance_stream_manager import BinanceCache, BinanceOrder, BinanceStreamMan
 from .config import Config
 from .database import Database
 from .logger import Logger
-from .models import Coin
 
 
 def float_as_decimal_str(num: float):
@@ -176,23 +175,21 @@ class BinanceAPIManager:
     def get_using_bnb_for_fees(self):
         return self.binance_client.get_bnb_burn_spot_margin()["spotBNBBurn"]
 
-    def get_fee(self, origin_coin: Coin, target_coin: Coin, selling: bool):
+    def get_fee(self, origin_coin: str, target_coin: str, selling: bool):
         base_fee = self.get_trade_fees()[origin_coin + target_coin]
         if not self.get_using_bnb_for_fees():
             return base_fee
 
         # The discount is only applied if we have enough BNB to cover the fee
         amount_trading = (
-            self._sell_quantity(origin_coin.symbol, target_coin.symbol)
-            if selling
-            else self._buy_quantity(origin_coin.symbol, target_coin.symbol)
+            self._sell_quantity(origin_coin, target_coin) if selling else self._buy_quantity(origin_coin, target_coin)
         )
 
         fee_amount = amount_trading * base_fee * 0.75
-        if origin_coin.symbol == "BNB":
+        if origin_coin == "BNB":
             fee_amount_bnb = fee_amount
         else:
-            origin_price = self.get_ticker_price(origin_coin + Coin("BNB"))
+            origin_price = self.get_ticker_price(origin_coin + "BNB")
             if origin_price is None:
                 return base_fee
             fee_amount_bnb = fee_amount * origin_price
@@ -270,7 +267,7 @@ class BinanceAPIManager:
     def get_min_notional(self, origin_symbol: str, target_symbol: str):
         return float(self.get_symbol_filter(origin_symbol, target_symbol, "MIN_NOTIONAL")["minNotional"])
 
-    def buy_alt(self, origin_coin: Coin, target_coin: Coin, buy_price: float) -> BinanceOrder:
+    def buy_alt(self, origin_coin: str, target_coin: str, buy_price: float) -> BinanceOrder:
         return self.retry(self._buy_alt, origin_coin, target_coin, buy_price)
 
     def _buy_quantity(
@@ -282,12 +279,12 @@ class BinanceAPIManager:
         origin_tick = self.get_alt_tick(origin_symbol, target_symbol)
         return math.floor(target_balance * 10 ** origin_tick / from_coin_price) / float(10 ** origin_tick)
 
-    def _buy_alt(self, origin_coin: Coin, target_coin: Coin, buy_price: float):  # pylint: disable=too-many-locals
+    def _buy_alt(self, origin_coin: str, target_coin: str, buy_price: float):  # pylint: disable=too-many-locals
         """
         Buy altcoin
         """
-        origin_symbol = origin_coin.symbol
-        target_symbol = target_coin.symbol
+        origin_symbol = origin_coin
+        target_symbol = target_coin
 
         with self.cache.open_balances() as balances:
             balances.clear()
@@ -295,8 +292,6 @@ class BinanceAPIManager:
         origin_balance = self.get_currency_balance(origin_symbol)
         target_balance = self.get_currency_balance(target_symbol)
         from_coin_price = buy_price
-
-        trade_log = self.db.start_trade_log(origin_coin, target_coin, False)
 
         order_quantity = self._buy_quantity(origin_symbol, target_symbol, target_balance, from_coin_price)
         self.logger.info(f"BUY QTY {order_quantity} of <{origin_symbol}>")
@@ -314,15 +309,18 @@ class BinanceAPIManager:
         if executed_qty > 0 and order.status == "FILLED":
             order_quantity = executed_qty  # Market buys provide QTY of actually bought asset
 
-        trade_log.set_ordered(origin_balance, target_balance, order_quantity)
-
         self.logger.info(f"Bought {origin_symbol}")
 
-        trade_log.set_complete(order.cumulative_quote_qty)
+        def write_trade_log():
+            trade_log = self.db.start_trade_log(origin_coin, target_coin, False)
+            trade_log.set_ordered(origin_balance, target_balance, order_quantity)
+            trade_log.set_complete(order.cumulative_quote_qty)
+
+        self.db.schedule_execute_later(write_trade_log)
 
         return order
 
-    def sell_alt(self, origin_coin: Coin, target_coin: Coin, sell_price: float) -> BinanceOrder:
+    def sell_alt(self, origin_coin: str, target_coin: str, sell_price: float) -> BinanceOrder:
         return self.retry(self._sell_alt, origin_coin, target_coin, sell_price)
 
     def _sell_quantity(self, origin_symbol: str, target_symbol: str, origin_balance: float = None):
@@ -331,12 +329,12 @@ class BinanceAPIManager:
         origin_tick = self.get_alt_tick(origin_symbol, target_symbol)
         return math.floor(origin_balance * 10 ** origin_tick) / float(10 ** origin_tick)
 
-    def _sell_alt(self, origin_coin: Coin, target_coin: Coin, sell_price: float):  # pylint: disable=too-many-locals
+    def _sell_alt(self, origin_coin: str, target_coin: str, sell_price: float):  # pylint: disable=too-many-locals
         """
         Sell altcoin
         """
-        origin_symbol = origin_coin.symbol
-        target_symbol = target_coin.symbol
+        origin_symbol = origin_coin
+        target_symbol = target_coin
 
         # get fresh balances
         with self.cache.open_balances() as balances:
@@ -345,8 +343,6 @@ class BinanceAPIManager:
         origin_balance = self.get_currency_balance(origin_symbol)
         target_balance = self.get_currency_balance(target_symbol)
         from_coin_price = sell_price
-
-        trade_log = self.db.start_trade_log(origin_coin, target_coin, True)
 
         order_quantity = self._sell_quantity(origin_symbol, target_symbol, origin_balance)
         self.logger.info(f"Selling {order_quantity} of {origin_symbol}")
@@ -361,8 +357,6 @@ class BinanceAPIManager:
         self.logger.info(order)
         order = BinanceOrder(order)
 
-        trade_log.set_ordered(origin_balance, target_balance, order_quantity)
-
         new_balance = self.get_currency_balance(origin_symbol)
         while new_balance >= origin_balance:
             # wait at most for 1s to receive websockets update on balances, otherwise should force-fetch balances
@@ -372,6 +366,11 @@ class BinanceAPIManager:
 
         self.logger.info(f"Sold {origin_symbol}")
 
-        trade_log.set_complete(order.cumulative_quote_qty)
+        def write_trade_log():
+            trade_log = self.db.start_trade_log(origin_coin, target_coin, True)
+            trade_log.set_ordered(origin_balance, target_balance, order_quantity)
+            trade_log.set_complete(order.cumulative_quote_qty)
+
+        self.db.schedule_execute_later(write_trade_log)
 
         return order

@@ -62,20 +62,25 @@ class RatiosManager:
         self.n = CoinStub.len_coins()
         self._data = array("d", (nan if i != j else 1.0 for i in range(self.n) for j in range(self.n)))
         self._dirty: Dict[Tuple[int, int], float] = {}
+        self._ids: Optional[array] = None
         if ratios is not None:
+            self._ids = array("Q", (0 for _ in range(self.n * self.n)))
             for pair in ratios:
                 i = CoinStub.get_by_symbol(pair.from_coin.symbol).idx
                 j = CoinStub.get_by_symbol(pair.to_coin.symbol).idx
                 val = pair.ratio if pair.ratio is not None else nan
-                self._data[self.n * i + j] = val
+                pair_id = pair.id if pair.id is not None else 0
+                idx = self.n * i + j
+                self._data[idx] = val
+                self._ids[idx] = pair_id
 
-    def set(self, from_coin_idx: int, to_coin_idx: int, val: float, /):
+    def set(self, from_coin_idx: int, to_coin_idx: int, val: float):
         cell = (from_coin_idx, to_coin_idx)
         if cell not in self._dirty:
             self._dirty[cell] = self._data[self.n * cell[0] + cell[1]]
         self._data[self.n * cell[0] + cell[1]] = val
 
-    def get(self, from_coin_idx: int, to_coin_idx: int, /) -> float:
+    def get(self, from_coin_idx: int, to_coin_idx: int) -> float:
         return self._data[self.n * from_coin_idx + to_coin_idx]
 
     def get_from_coin(self, from_coin_idx: int):
@@ -86,6 +91,9 @@ class RatiosManager:
 
     def get_dirty(self) -> KeysView[Tuple[int, int]]:
         return self._dirty.keys()
+
+    def get_pair_id(self, from_coin_idx: int, to_coin_idx: int) -> int:
+        return self._ids[from_coin_idx * self.n + to_coin_idx]
 
     def rollback(self):
         for cell, old_value in self._dirty.items():

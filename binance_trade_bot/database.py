@@ -2,18 +2,23 @@ import contextlib
 import json
 import os
 import time
+from collections import namedtuple
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from typing import List, Optional, Union
 
 from socketio import Client
 from socketio.exceptions import ConnectionError as SocketIOConnectionError
-from sqlalchemy import create_engine, func
+from sqlalchemy import bindparam, create_engine, func
 from sqlalchemy.orm import Session, scoped_session, sessionmaker
+
+from binance_trade_bot.ratios import CoinStub, RatiosManager
 
 from .config import Config
 from .logger import Logger
 from .models import *  # pylint: disable=wildcard-import
+
+LogScout = namedtuple("LogScout", ["pair_id", "target_ratio", "coin_price", "optional_coin_price"])
 
 
 class Database:
@@ -22,7 +27,9 @@ class Database:
         self.config = config
         self.engine = create_engine(uri)
         self.SessionMaker = sessionmaker(bind=self.engine)
+        self.ratios_manager: Optional[RatiosManager] = None
         self.socketio_client = Client()
+        self._execute_later = []
 
     def socketio_connect(self):
         if self.socketio_client.connected and self.socketio_client.namespaces:
@@ -45,6 +52,14 @@ class Database:
         yield session
         session.commit()
         session.close()
+
+    def schedule_execute_later(self, f, *args):
+        self._execute_later.append((f, args))
+
+    def execute_postponed_calls(self):
+        for f, args in self._execute_later:
+            f(*args)
+        self._execute_later.clear()
 
     def manage_session(self, session=None):
         if session is None:
@@ -72,15 +87,24 @@ class Database:
                 else:
                     coin.enabled = True
 
+        CoinStub.reset()
+
         # For all the combinations of coins in the database, add a pair to the database
         with self.db_session() as session:
-            coins: List[Coin] = session.query(Coin).filter(Coin.enabled).all()
+            coins: List[Coin] = session.query(Coin).filter(Coin.enabled).order_by(Coin.symbol).all()
+            for coin in coins:
+                CoinStub.create(coin.symbol)
             for from_coin in coins:
                 for to_coin in coins:
                     if from_coin != to_coin:
                         pair = session.query(Pair).filter(Pair.from_coin == from_coin, Pair.to_coin == to_coin).first()
                         if pair is None:
                             session.add(Pair(from_coin, to_coin))
+
+        # Fill lookup table for id discovery
+        with self.db_session() as session:
+            pairs = session.query(Pair).filter(Pair.enabled.is_(True)).all()
+            self.ratios_manager = RatiosManager(pairs)
 
     def get_coins(self, only_enabled=True) -> List[Coin]:
         session: Session
@@ -92,11 +116,11 @@ class Database:
             session.expunge_all()
             return coins
 
-    def get_coin(self, coin: Union[Coin, str], external_session=None) -> Coin:
+    def get_coin(self, coin: Union[Coin, str]) -> Coin:
         if isinstance(coin, Coin):
             return coin
-        external_session: Session
-        with self.manage_session(external_session) as session:
+        session: Session
+        with self.db_session() as session:
             coin = session.query(Coin).get(coin)
             session.expunge(coin)
             return coin
@@ -130,59 +154,25 @@ class Database:
             session.expunge(pair)
             return pair
 
-    def get_pairs_from(self, from_coin: Union[Coin, str], only_enabled=True, external_session=None) -> List[Pair]:
-        from_coin = self.get_coin(from_coin, external_session)
-        external_session: Session
-        with self.manage_session(external_session) as session:
-            pairs = session.query(Pair).filter(Pair.from_coin == from_coin)
-            if only_enabled:
-                pairs = pairs.filter(Pair.enabled.is_(True))
-            pairs = pairs.all()
-            session.expunge_all()
-            return pairs
-
-    def get_pairs(self, only_enabled=True) -> List[Pair]:
+    def batch_log_scout(self, logs: List[LogScout]):
         session: Session
         with self.db_session() as session:
-            pairs = session.query(Pair)
-            if only_enabled:
-                pairs = pairs.filter(Pair.enabled.is_(True))
-            pairs = pairs.all()
-            session.expunge_all()
-            return pairs
-
-    def batch_log_scout(self, logs: List[ScoutHistory]):
-        session: Session
-        with self.db_session() as session:
+            dt = datetime.now()
             session.execute(
                 ScoutHistory.__table__.insert(),
                 [
                     {
-                        "pair_id": ls.pair.id,
+                        "pair_id": ls.pair_id,
                         "target_ratio": ls.target_ratio,
-                        "current_coin_price": ls.current_coin_price,
-                        "other_coin_price": ls.other_coin_price,
-                        "datetime": ls.datetime,
+                        "current_coin_price": ls.coin_price,
+                        "other_coin_price": ls.optional_coin_price,
+                        "datetime": dt,
                     }
                     for ls in logs
                 ],
             )
-            for scout_history in logs:
-                self.send_update(scout_history)
-
-    def log_scout(
-        self,
-        pair: Pair,
-        target_ratio: float,
-        current_coin_price: float,
-        other_coin_price: float,
-    ):
-        session: Session
-        with self.db_session() as session:
-            pair = session.merge(pair)
-            sh = ScoutHistory(pair, target_ratio, current_coin_price, other_coin_price)
-            session.add(sh)
-            self.send_update(sh)
+            # need to repair send_update here for log scouts
+            # self.send_update(sh)
 
     def prune_scout_history(self):
         time_diff = datetime.now() - timedelta(hours=self.config.SCOUT_HISTORY_PRUNE_TIME)
@@ -239,7 +229,7 @@ class Database:
     def create_database(self):
         Base.metadata.create_all(self.engine)
 
-    def start_trade_log(self, from_coin: Coin, to_coin: Coin, selling: bool):
+    def start_trade_log(self, from_coin: str, to_coin: str, selling: bool):
         return TradeLog(self, from_coin, to_coin, selling)
 
     def send_update(self, model):
@@ -263,11 +253,11 @@ class Database:
                 self.logger.info(f".current_coin file found, loading current coin {coin}")
                 self.set_current_coin(coin)
             os.rename(".current_coin", ".current_coin.old")
-            self.logger.info(f".current_coin renamed to .current_coin.old - You can now delete this file")
+            self.logger.info(".current_coin renamed to .current_coin.old - You can now delete this file")
 
         if os.path.isfile(".current_coin_table"):
             with open(".current_coin_table") as f:
-                self.logger.info(f".current_coin_table file found, loading into database")
+                self.logger.info(".current_coin_table file found, loading into database")
                 table: dict = json.load(f)
                 session: Session
                 with self.db_session() as session:
@@ -281,6 +271,27 @@ class Database:
 
             os.rename(".current_coin_table", ".current_coin_table.old")
             self.logger.info(".current_coin_table renamed to .current_coin_table.old - " "You can now delete this file")
+
+    def commit_ratios(self):
+        dirty_cells = self.ratios_manager.get_dirty()
+
+        if len(dirty_cells) == 0:
+            return
+
+        pair_t = Pair.__table__
+        stmt = pair_t.update().where(pair_t.c.id == bindparam("pair_id")).values(ratio=bindparam("pair_ratio"))
+        with self.db_session() as session:
+            session.execute(
+                stmt,
+                [
+                    {
+                        "pair_id": self.ratios_manager.get_pair_id(from_idx, to_idx),
+                        "pair_ratio": self.ratios_manager.get(from_idx, to_idx),
+                    }
+                    for from_idx, to_idx in dirty_cells
+                ],
+            )
+        self.ratios_manager.commit()
 
     def batch_update_coin_values(self, cv_batch: List[CoinValue]):
         session: Session
@@ -302,12 +313,12 @@ class Database:
 
 
 class TradeLog:
-    def __init__(self, db: Database, from_coin: Coin, to_coin: Coin, selling: bool):
+    def __init__(self, db: Database, from_coin: str, to_coin: str, selling: bool):
         self.db = db
         session: Session
         with self.db.db_session() as session:
-            from_coin = session.merge(from_coin)
-            to_coin = session.merge(to_coin)
+            # from_coin = session.merge(from_coin)
+            # to_coin = session.merge(to_coin)
             self.trade = Trade(from_coin, to_coin, selling)
             session.add(self.trade)
             # Flush so that SQLAlchemy fills in the id column

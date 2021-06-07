@@ -3,6 +3,7 @@ import sys
 from datetime import datetime
 
 from binance_trade_bot.auto_trader import AutoTrader
+from binance_trade_bot.ratios import CoinStub
 
 
 class Strategy(AutoTrader):
@@ -32,7 +33,9 @@ class Strategy(AutoTrader):
             self.logger.info("Skipping scouting... current coin {} not found".format(current_coin + self.config.BRIDGE))
             return
 
-        self._jump_to_best_coin(current_coin, current_coin_price, current_coin_quote, current_coin_amount)
+        self._jump_to_best_coin(
+            CoinStub.get_by_symbol(current_coin.symbol), current_coin_price, current_coin_quote, current_coin_amount
+        )
 
     def bridge_scout(self):
         current_coin = self.db.get_current_coin()
@@ -65,6 +68,8 @@ class Strategy(AutoTrader):
                 current_coin = self.db.get_current_coin()
                 self.logger.info(f"Purchasing {current_coin} to begin trading")
                 self.manager.buy_alt(
-                    current_coin, self.config.BRIDGE, self.manager.get_ticker_price(current_coin + self.config.BRIDGE)
+                    current_coin.symbol,
+                    self.config.BRIDGE.symbol,
+                    self.manager.get_ticker_price(current_coin.symbol + self.config.BRIDGE.symbol),
                 )
                 self.logger.info("Ready to start trading")

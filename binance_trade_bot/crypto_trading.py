@@ -33,7 +33,7 @@ def main():
         return
     trader = strategy(manager, db, logger, config)
     logger.info(f"Chosen strategy: {config.STRATEGY}")
-    logger.info(f"Order book trading edition, everything is market type")
+    logger.info("Order book trading edition, everything is market order type")
     if config.ENABLE_PAPER_TRADING:
         logger.warning("RUNNING IN PAPER-TRADING MODE")
     else:
@@ -44,6 +44,8 @@ def main():
 
     db.set_coins(config.SUPPORTED_COIN_LIST)
     db.migrate_old_state()
+    logger.info("Sleeping for 10 seconds to let order books to fill up")
+    time.sleep(10)
 
     trader.initialize()
 

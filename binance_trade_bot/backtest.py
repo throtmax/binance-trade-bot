@@ -15,23 +15,23 @@ from .logger import Logger
 from .models import Coin, Pair, ScoutHistory
 from .strategies import get_strategy
 
-cache = SqliteDict("data/backtest_cache.db")
-
 
 class MockBinanceManager(BinanceAPIManager):
     def __init__(
         self,
         client: Client,
+        sqlite_cache: SqliteDict,
         binance_cache: BinanceCache,
         config: Config,
         db: Database,
         logger: Logger,
         start_date: datetime = None,
         start_balances: Dict[str, float] = None,
-    ):
+    ):  # pylint:disable=too-many-arguments
         super().__init__(
             client, binance_cache, config, db, logger, BinanceOrderBalanceManager(logger, client, binance_cache)
         )
+        self.sqlite_cache = sqlite_cache
         self.config = config
         self.datetime = start_date or datetime(2021, 1, 1)
         self.balances = start_balances or {config.BRIDGE.symbol: 100}
@@ -61,7 +61,7 @@ class MockBinanceManager(BinanceAPIManager):
         """
         target_date = self.datetime.strftime("%d %b %Y %H:%M:%S")
         key = f"{ticker_symbol} - {target_date}"
-        val = cache.get(key, None)
+        val = self.sqlite_cache.get(key, None)
         if val is None:
             end_date = self.datetime + timedelta(minutes=1000)
             if end_date > datetime.now():
@@ -78,14 +78,14 @@ class MockBinanceManager(BinanceAPIManager):
                 else (datetime.utcfromtimestamp(historical_klines[0][0] / 1000) - timedelta(minutes=1))
             )
             while no_data_cur_date <= no_data_end_date:
-                cache[f"{ticker_symbol} - {no_data_cur_date.strftime('%d %b %Y %H:%M:%S')}"] = 0.0
+                self.sqlite_cache[f"{ticker_symbol} - {no_data_cur_date.strftime('%d %b %Y %H:%M:%S')}"] = 0.0
                 no_data_cur_date += timedelta(minutes=1)
             for result in historical_klines:
                 date = datetime.utcfromtimestamp(result[0] / 1000).strftime("%d %b %Y %H:%M:%S")
                 price = float(result[1])
-                cache[f"{ticker_symbol} - {date}"] = price
-            cache.commit()
-            val = cache.get(key, None)
+                self.sqlite_cache[f"{ticker_symbol} - {date}"] = price
+            self.sqlite_cache.commit()
+            val = self.sqlite_cache.get(key, None)
         return val if val != 0.0 else None
 
     def get_currency_balance(self, currency_symbol: str, force=False):
@@ -211,6 +211,7 @@ def backtest(
 
     :return: The final coin balances
     """
+    sqlite_cache = SqliteDict("data/backtest_cache.db")
     config = config or Config()
     logger = Logger("backtesting", enable_notifications=False)
 
@@ -221,6 +222,7 @@ def backtest(
     db.set_coins(config.SUPPORTED_COIN_LIST)
     manager = MockBinanceManager(
         Client(config.BINANCE_API_KEY, config.BINANCE_API_SECRET_KEY, tld=config.BINANCE_TLD),
+        sqlite_cache,
         BinanceCache(),
         config,
         db,
@@ -257,5 +259,5 @@ def backtest(
             n += 1
     except KeyboardInterrupt:
         pass
-    cache.close()
+    sqlite_cache.close()
     return manager

@@ -1,4 +1,6 @@
+import json
 import math
+import os
 import time
 import traceback
 from abc import ABC, abstractmethod
@@ -39,14 +41,27 @@ class AbstractOrderBalanceManager(ABC):
             params["quoteOrderQty"] = float_as_decimal_str(quote_quantity)
         return self.create_order(**params)
 
+    def close(self):
+        pass
+
 
 class PaperOrderBalanceManager(AbstractOrderBalanceManager):
-    def __init__(self, bridge_symbol: str, client: Client, cache: BinanceCache, initial_balances: Dict[str, float]):
+    def __init__(
+        self,
+        bridge_symbol: str,
+        client: Client,
+        cache: BinanceCache,
+        initial_balances: Dict[str, float],
+        read_persist=True,
+    ):
         self.balances = initial_balances
         self.bridge = bridge_symbol
         self.client = client
         self.cache = cache
         self.fake_order_id = 0
+        if read_persist and os.path.exists("data/paper_wallet.json"):
+            with open("data/paper_wallet.json") as json_file:
+                self.balances = json.load(json_file)
 
     def get_currency_balance(self, currency_symbol: str, force=False):
         return self.balances.get(currency_symbol, 0.0)
@@ -76,6 +91,10 @@ class PaperOrderBalanceManager(AbstractOrderBalanceManager):
             side=side,
             type=Client.ORDER_TYPE_MARKET,
         )
+
+    def close(self):
+        with open("data/paper_wallet.json", "w") as json_file:
+            json.dump(self.balances, json_file)
 
 
 class BinanceOrderBalanceManager(AbstractOrderBalanceManager):
@@ -199,6 +218,10 @@ class BinanceAPIManager:
         if bnb_balance >= fee_amount_bnb:
             return base_fee * 0.75
         return base_fee
+
+    def close(self):
+        self.order_balance_manager.close()
+        self.stream_manager.close()
 
     def get_account(self):
         """

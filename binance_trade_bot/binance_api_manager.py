@@ -8,6 +8,7 @@ from collections import defaultdict
 from typing import Callable, Dict, Optional
 
 from binance.client import Client
+from binance.exceptions import BinanceAPIException, BinanceOrderException, BinanceRequestException
 from cachetools import TTLCache, cached
 
 from .binance_stream_manager import BinanceCache, BinanceOrder, BinanceStreamManager, StreamManagerWorker
@@ -265,10 +266,9 @@ class BinanceAPIManager:
         for attempt in range(20):
             try:
                 return func(*args, **kwargs)
-            except Exception:  # pylint: disable=broad-except
+            except (BinanceOrderException, BinanceAPIException, BinanceRequestException):
                 self.logger.warning(f"Failed to Buy/Sell. Trying Again (attempt {attempt}/20)")
-                if attempt == 0:
-                    self.logger.warning(traceback.format_exc())
+                self.logger.warning(traceback.format_exc())
             time.sleep(1)
         return None
 

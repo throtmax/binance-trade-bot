@@ -65,6 +65,6 @@ class Config:  # pylint: disable=too-few-public-methods,too-many-instance-attrib
         self.CURRENT_COIN_SYMBOL = os.environ.get("CURRENT_COIN_SYMBOL") or config.get(USER_CFG_SECTION, "current_coin")
 
         self.STRATEGY = os.environ.get("STRATEGY") or config.get(USER_CFG_SECTION, "strategy")
-        self.ENABLE_PAPER_TRADING = bool(
+        self.ENABLE_PAPER_TRADING = (
             os.environ.get("ENABLE_PAPER_TRADING") or config.get(USER_CFG_SECTION, "enable_paper_trading")
-        )
+        ) == "True"

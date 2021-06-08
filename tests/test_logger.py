@@ -1,16 +1,33 @@
-import logging
-import sys, os
+import pytest
+import os
 
 from  binance_trade_bot.logger import Logger
 
-def test_log1(capsys) :
+@pytest.fixture(scope='function', params=['crypto_trading', 'boba_boba'])
+def createAndDeleteFile(request):
+
+    ln = request.param
+    fn = os.path.join('logs',ln+'.log')
+
+    if os.path.exists(fn):
+        os.remove(fn)
+
+    yield ln,fn
+
+    if os.path.exists(fn):
+        os.remove(fn)
+    pass
+
+
+def test_log1(capsys, createAndDeleteFile) :
+
+    ln,fn = createAndDeleteFile
 
     #caplog - not work?
 
-    if os.path.exists(os.path.join('logs', 'crypto_trading.log')) :
-        os.remove(os.path.join('logs', 'crypto_trading.log'))
+    logs = Logger(enable_notifications=True,logging_service=ln)
 
-    logs = Logger(enable_notifications=True)
+    assert os.path.exists(fn), "Log file not exists"
 
     logs.error('rroorree')
     captured = capsys.readouterr()
@@ -23,41 +40,43 @@ def test_log1(capsys) :
     logs.warning('ggnniinnrraaww')
     captured = capsys.readouterr()
     assert str(captured).find('WARNING')>-1
-    '''
+
+    assert os.path.exists(fn), "Log file not exists"
+
+@pytest.mark.xfail
+def test_log1_(capsys,createAndDeleteFile): # bad case
+
+    ln,fn = createAndDeleteFile
+
+    #caplog - not work?
+
+    logs = Logger(enable_notifications=True,logging_service=ln)
+
+    assert os.path.exists(fn), "Log file not exists"
+
     logs.debug('gguubbeedd', notification=True)
     captured = capsys.readouterr()
     assert str(captured).find('DEBUG')>-1
-    
+
     logs.log('guliguli',level='ddebug',notification=True)
     captured = capsys.readouterr()
     assert str(captured).find('DEBUG')>-1
-    '''
-    assert os.path.exists(os.path.join('logs','crypto_trading.log')) , "Default log file not exists"
 
-    if os.path.exists(os.path.join('logs', 'crypto_trading.log')) :
-        os.remove(os.path.join('logs', 'crypto_trading.log'))
+    assert os.path.exists(fn), "Log file not exists"
 
-    #print('\nempty:',captured)
+@pytest.mark.xfail
+def test_log2(capsys,createAndDeleteFile):
 
-    assert True
-
-def test_log2(capsys):
+    ln,fn = createAndDeleteFile
 
     # caplog - not work?
 
-    if os.path.exists(os.path.join('logs', 'boba_boba.log')) :
-        os.remove(os.path.join('logs', 'boba_boba.log'))
+    logs2 = Logger(enable_notifications=False, logging_service=ln)
 
-    logs2 = Logger(enable_notifications=False, logging_service='boba_boba')
-
-    assert os.path.exists(os.path.join('logs','boba_boba.log')) , "Random log file not exists"
+    assert os.path.exists(fn), "Log file not exists"
 
     logs2.warning('ggnniinnrraaww',notification=False)
     captured = capsys.readouterr()
     print('\n',captured)
     assert len(str(captured))==0 , 'Notification==False , but informing?'
 
-    if os.path.exists(os.path.join('logs', 'boba_boba.log')) :
-        os.remove(os.path.join('logs', 'boba_boba.log'))
-
-    assert True

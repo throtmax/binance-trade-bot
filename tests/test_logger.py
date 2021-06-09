@@ -1,13 +1,13 @@
 import pytest
 import os
 
-from  binance_trade_bot.logger import Logger
+from binance_trade_bot.logger import Logger
 
 @pytest.fixture(scope='function', params=['crypto_trading', 'boba_boba'])
 def createAndDeleteFile(request):
 
     ln = request.param
-    fn = os.path.join('logs',ln+'.log')
+    fn = os.path.join('logs', ln+'.log')
 
     if os.path.exists(fn):
         os.remove(fn)
@@ -77,6 +77,6 @@ def test_log2(capsys,createAndDeleteFile):
 
     logs2.warning('ggnniinnrraaww',notification=False)
     captured = capsys.readouterr()
-    print('\n',captured)
     assert len(str(captured))==0 , 'Notification==False , but informing?'
+    print('\n',captured)
 

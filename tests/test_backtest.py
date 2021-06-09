@@ -45,7 +45,7 @@ def DoUserConfig():
     yield
 
 @pytest.mark.timeout(60)
-###@pytest.mark.skip(reason='Long working time')
+@pytest.mark.skip(reason='Long working time')
 def test_backtest_main_module_on_run(capsys, infra, DoUserConfig) :
     with pytest.raises(KeyError) as rraise :
         #rr.run_module('../backtest.py',run_name='__main__')
@@ -54,16 +54,29 @@ def test_backtest_main_module_on_run(capsys, infra, DoUserConfig) :
     assert True
 
 #####@pytest.mark.skip(reason="for debug time")
-def test_backtest1_on_run(infra):
-
+def test_backtest1_on_run(infra,DoUserConfig):
     backtest(datetime.datetime(2021,6,1),datetime.datetime.now())
-    backtest(datetime.datetime(2021,6,2),datetime.datetime.now())
-    backtest(datetime.datetime(2021,6,3),datetime.datetime.now(),interval=10)
-    backtest(datetime.datetime(2121,6,4),datetime.datetime.now(),interval=110)
-    backtest(datetime.datetime(2021,6,5),datetime.datetime.now(),interval=110,yield_interval=15)
-    backtest(datetime.datetime(2021,6,6),datetime.datetime.now(),interval=110,start_balances=300)
-    backtest(datetime.datetime(2021,6,7),datetime.datetime.now(),interval=110)
-    backtest(datetime.datetime(2025,6,8),datetime.datetime.now(),interval=110,starting_coin=800)
+    assert True
+
+@pytest.mark.timeout(600)
+@pytest.mark.parametrize("date_start",[datetime.datetime(2021,6,1),])
+@pytest.mark.parametrize("date_end",[datetime.datetime(2021,6,3),])
+@pytest.mark.parametrize("interval",[10,])
+def test_backtest2_on_run(infra,DoUserConfig, date_start, date_end, interval):
+    history = []
+    for manager in backtest(date_start,date_end, interval=interval):
+
+        btc_value = manager.collate_coins("BTC")
+        bridge_value = manager.collate_coins(manager.config.BRIDGE.symbol)
+        history.append((btc_value, bridge_value))
+        btc_diff = round((btc_value - history[0][0]) / history[0][0] * 100, 3)
+        bridge_diff = round((bridge_value - history[0][1]) / history[0][1] * 100, 3)
+
+        print(datetime.datetime.now(), "-"*40)
+        print(datetime.datetime.now(), "TIME:", manager.datetime)
+        print(datetime.datetime.now(), "BALANCES:", manager.balances)
+        print(datetime.datetime.now(), "BTC VALUE:", btc_value, f"({btc_diff}%)")
+        print(datetime.datetime.now(), f"{manager.config.BRIDGE.symbol} VALUE:", bridge_value, f"({bridge_diff}%)")
 
     assert True
 

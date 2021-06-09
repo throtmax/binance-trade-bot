@@ -2,9 +2,10 @@ import pytest
 import os
 
 from binance_trade_bot.logger import Logger
+from .common import infra
 
 @pytest.fixture(scope='function', params=['crypto_trading', 'boba_boba'])
-def createAndDeleteFile(request):
+def createAndDeleteFile(infra, request):
 
     ln = request.param
     fn = os.path.join('logs', ln+'.log')
@@ -12,11 +13,11 @@ def createAndDeleteFile(request):
     if os.path.exists(fn):
         os.remove(fn)
 
-    yield ln,fn
+    yield ln, fn
 
     if os.path.exists(fn):
         os.remove(fn)
-    pass
+
 
 
 def test_log1(capsys, createAndDeleteFile) :

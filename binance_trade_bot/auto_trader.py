@@ -264,9 +264,12 @@ class AutoTrader(ABC):
                     self.logger.info(f"Squashed jump chain: {jump_chain}")
                 if jump_chain[0] != jump_chain[-1]:
                     self.logger.info(f"Will be jumping from {coin.symbol} to {last_coin.symbol}")
-                    self.logger.info(f"Expected bridge amount on sell: {quote_amount}")
-                    self.logger.info(f"Expected coin buy amount: {last_coin_amount}")
-                    self.transaction_through_bridge(coin, last_coin, coin_sell_price, last_coin_buy_price)
+                    result = self.transaction_through_bridge(coin, last_coin, coin_sell_price, last_coin_buy_price)
+                    self.logger.info(
+                        f"Expected: {last_coin_amount:0.08f}, "
+                        f"Actual: {result.cumulative_filled_quantity:0.08f}, "
+                        f"Slippage: {last_coin_amount/result.cumulative_filled_quantity - 1:0.06%}"
+                    )
                 else:
                     self.update_trade_threshold(coin, coin_sell_price, quote_amount)
                     self.logger.info(f"Eliminated jump loop from {coin.symbol} to {coin.symbol}")

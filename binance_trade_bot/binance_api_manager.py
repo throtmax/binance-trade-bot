@@ -130,7 +130,7 @@ class BinanceOrderBalanceManager(AbstractOrderBalanceManager):
             return balance
 
 
-class BinanceAPIManager:
+class BinanceAPIManager:  # pylint:disable=too-many-public-methods
     def __init__(
         self,
         client: Client,
@@ -202,7 +202,7 @@ class BinanceAPIManager:
 
         # The discount is only applied if we have enough BNB to cover the fee
         amount_trading = (
-            self._sell_quantity(origin_coin, target_coin) if selling else self._buy_quantity(origin_coin, target_coin)
+            self.sell_quantity(origin_coin, target_coin) if selling else self.buy_quantity(origin_coin, target_coin)
         )
 
         fee_amount = amount_trading * base_fee * 0.75
@@ -293,7 +293,7 @@ class BinanceAPIManager:
     def buy_alt(self, origin_coin: str, target_coin: str, buy_price: float) -> BinanceOrder:
         return self.retry(self._buy_alt, origin_coin, target_coin, buy_price)
 
-    def _buy_quantity(
+    def buy_quantity(
         self, origin_symbol: str, target_symbol: str, target_balance: float = None, from_coin_price: float = None
     ):
         target_balance = target_balance or self.get_currency_balance(target_symbol)
@@ -313,7 +313,7 @@ class BinanceAPIManager:
         target_balance = self.get_currency_balance(target_symbol)
         from_coin_price = buy_price
 
-        order_quantity = self._buy_quantity(origin_symbol, target_symbol, target_balance, from_coin_price)
+        order_quantity = self.buy_quantity(origin_symbol, target_symbol, target_balance, from_coin_price)
         self.logger.info(f"BUY QTY {order_quantity} of <{origin_symbol}>")
 
         order = self.order_balance_manager.make_order(
@@ -343,7 +343,7 @@ class BinanceAPIManager:
     def sell_alt(self, origin_coin: str, target_coin: str, sell_price: float) -> BinanceOrder:
         return self.retry(self._sell_alt, origin_coin, target_coin, sell_price)
 
-    def _sell_quantity(self, origin_symbol: str, target_symbol: str, origin_balance: float = None):
+    def sell_quantity(self, origin_symbol: str, target_symbol: str, origin_balance: float = None):
         origin_balance = origin_balance or self.get_currency_balance(origin_symbol)
 
         origin_tick = self.get_alt_tick(origin_symbol, target_symbol)
@@ -360,7 +360,7 @@ class BinanceAPIManager:
         target_balance = self.get_currency_balance(target_symbol)
         from_coin_price = sell_price
 
-        order_quantity = self._sell_quantity(origin_symbol, target_symbol, origin_balance)
+        order_quantity = self.sell_quantity(origin_symbol, target_symbol, origin_balance)
         self.logger.info(f"Selling {order_quantity} of {origin_symbol}")
 
         self.logger.info(f"Balance is {origin_balance}")

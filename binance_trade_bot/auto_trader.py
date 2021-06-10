@@ -225,6 +225,7 @@ class AutoTrader(ABC):
         last_coin_buy_price = 0.0  # it will be set for reasonable value after we found our first jump candidate
         last_coin_quote = quote_amount
         last_coin_amount = coin_amount
+        bridge_balance = self.manager.get_currency_balance(self.config.BRIDGE.symbol)
         is_initial_coin = True
 
         with ExitStack() as stack:
@@ -265,10 +266,20 @@ class AutoTrader(ABC):
                 if jump_chain[0] != jump_chain[-1]:
                     self.logger.info(f"Will be jumping from {coin.symbol} to {last_coin.symbol}")
                     result = self.transaction_through_bridge(coin, last_coin, coin_sell_price, last_coin_buy_price)
+                    expected_sold_quantity = self.manager.sell_quantity(
+                        coin.symbol, self.config.BRIDGE.symbol, coin_amount
+                    )
+                    expected_bridge = expected_sold_quantity * coin_sell_price * 0.999 + bridge_balance
+                    expected_bought_quantity = (
+                        self.manager.buy_quantity(
+                            last_coin.symbol, self.config.BRIDGE.symbol, expected_bridge, last_coin_buy_price
+                        )
+                        * 0.999
+                    )
                     self.logger.info(
-                        f"Expected: {last_coin_amount:0.08f}, "
+                        f"Expected: {expected_bought_quantity:0.08f}, "
                         f"Actual: {result.cumulative_filled_quantity:0.08f}, "
-                        f"Slippage: {last_coin_amount/result.cumulative_filled_quantity - 1:0.06%}"
+                        f"Slippage: {expected_bought_quantity/result.cumulative_filled_quantity - 1:0.06%}"
                     )
                 else:
                     self.update_trade_threshold(coin, coin_sell_price, quote_amount)

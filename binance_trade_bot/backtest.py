@@ -12,7 +12,7 @@ from .binance_stream_manager import BinanceCache, BinanceOrder
 from .config import Config
 from .database import Database
 from .logger import Logger
-from .models import Coin, Pair, ScoutHistory
+from .models import Pair, ScoutHistory
 from .strategies import get_strategy
 
 
@@ -52,7 +52,7 @@ class MockBinanceManager(BinanceAPIManager):
     def increment(self, interval=1):
         self.datetime += timedelta(minutes=interval)
 
-    def get_fee(self, origin_coin: Coin, target_coin: Coin, selling: bool):
+    def get_fee(self, origin_coin: str, target_coin: str, selling: bool):
         return 0.001
 
     def get_ticker_price(self, ticker_symbol: str):
@@ -106,9 +106,9 @@ class MockBinanceManager(BinanceAPIManager):
         price = self.get_ticker_price(symbol)
         return (price, quote_amount / price) if price is not None else (None, None)
 
-    def buy_alt(self, origin_coin: Coin, target_coin: Coin, buy_price: float):
-        origin_symbol = origin_coin.symbol
-        target_symbol = target_coin.symbol
+    def buy_alt(self, origin_coin: str, target_coin: str, buy_price: float):
+        origin_symbol = origin_coin
+        target_symbol = target_coin
 
         target_balance = self.get_currency_balance(target_symbol)
         from_coin_price = self.get_ticker_price(origin_symbol + target_symbol)
@@ -117,26 +117,25 @@ class MockBinanceManager(BinanceAPIManager):
         order_quantity = self._buy_quantity(origin_symbol, target_symbol, target_balance, from_coin_price)
         target_quantity = order_quantity * from_coin_price
         self.balances[target_symbol] -= target_quantity
-        self.balances[origin_symbol] = self.balances.get(origin_symbol, 0) + order_quantity * (
-            1 - self.get_fee(origin_coin, target_coin, False)
-        )
+        order_filled_quantity = order_quantity * (1 - self.get_fee(origin_coin, target_coin, False))
+        self.balances[origin_symbol] = self.balances.get(origin_symbol, 0) + order_filled_quantity
         self.logger.info(
             f"Bought {origin_symbol}, balance now: {self.balances[origin_symbol]} - bridge: "
             f"{self.balances[target_symbol]}"
         )
 
-        event = defaultdict(
-            lambda: None,
-            order_price=from_coin_price,
-            cumulative_quote_asset_transacted_quantity=0.0,
-            cumulative_filled_quantity=0.0,
+        return BinanceOrder(
+            defaultdict(
+                lambda: None,
+                price=from_coin_price,
+                cummulativeQuoteQty=target_quantity,
+                executedQty=order_filled_quantity,
+            )
         )
 
-        return BinanceOrder(event)
-
-    def sell_alt(self, origin_coin: Coin, target_coin: Coin, sell_price: float):
-        origin_symbol = origin_coin.symbol
-        target_symbol = target_coin.symbol
+    def sell_alt(self, origin_coin: str, target_coin: str, sell_price: float):
+        origin_symbol = origin_coin
+        target_symbol = target_coin
 
         origin_balance = self.get_currency_balance(origin_symbol)
         from_coin_price = self.get_ticker_price(origin_symbol + target_symbol)
@@ -144,15 +143,21 @@ class MockBinanceManager(BinanceAPIManager):
 
         order_quantity = self._sell_quantity(origin_symbol, target_symbol, origin_balance)
         target_quantity = order_quantity * from_coin_price
-        self.balances[target_symbol] = self.balances.get(target_symbol, 0) + target_quantity * (
-            1 - self.get_fee(origin_coin, target_coin, True)
-        )
+        target_filled_quantity = target_quantity * (1 - self.get_fee(origin_coin, target_coin, True))
+        self.balances[target_symbol] = self.balances.get(target_symbol, 0) + target_filled_quantity
         self.balances[origin_symbol] -= order_quantity
         self.logger.info(
             f"Sold {origin_symbol}, balance now: {self.balances[origin_symbol]} - bridge: "
             f"{self.balances[target_symbol]}"
         )
-        return {"price": from_coin_price}
+        return BinanceOrder(
+            defaultdict(
+                lambda: None,
+                price=from_coin_price,
+                cummulativeQuoteQty=target_filled_quantity,
+                executedQty=order_quantity,
+            )
+        )
 
     def collate_coins(self, target_symbol: str):
         total = 0
@@ -233,7 +238,7 @@ def backtest(
 
     starting_coin = db.get_coin(starting_coin or config.SUPPORTED_COIN_LIST[0])
     if manager.get_currency_balance(starting_coin.symbol) == 0:
-        manager.buy_alt(starting_coin, config.BRIDGE, 0.0)
+        manager.buy_alt(starting_coin.symbol, config.BRIDGE.symbol, 0.0)
     db.set_current_coin(starting_coin)
 
     strategy = get_strategy(config.STRATEGY)

@@ -68,7 +68,7 @@ class PaperOrderBalanceManager(AbstractOrderBalanceManager):
         return self.balances.get(currency_symbol, 0.0)
 
     def create_order(self, **params):
-        return self.client.create_test_order(**params)
+        return {}
 
     def make_order(self, side: str, symbol: str, quantity: float, quote_quantity: float):
         symbol_base = symbol[: -len(self.bridge)]

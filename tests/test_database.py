@@ -2,6 +2,8 @@ import pytest
 
 import os, datetime
 
+from sqlalchemy.orm import Session, scoped_session, sessionmaker
+
 from binance_trade_bot.database import Database
 from binance_trade_bot.logger   import Logger
 from binance_trade_bot.config   import Config
@@ -49,20 +51,52 @@ def DoUserConfig():
     yield
 
 class TestDatabase:
+
+    @pytest.mark.xfail
     def test_socketio_connect(self):
-        assert False
+        # test on run
+        logger = Logger("db_testing", enable_notifications=False)
+        config = Config()
+
+        dbtest = Database(logger, config)
+        dbtest.create_database()
+
+        result: bool = dbtest.socketio_connect()
+        assert result
 
     def test_db_session(self):
-        assert False
+        # test on run
+        logger = Logger("db_testing", enable_notifications=False)
+        config = Config()
 
+        dbtest = Database(logger, config)
+        dbtest.create_database()
+
+        session: Session = dbtest.db_session()
+        assert True
+
+    @pytest.mark.skip
     def test_schedule_execute_later(self):
         assert False
 
+    @pytest.mark.skip
     def test_execute_postponed_calls(self):
         assert False
 
     def test_manage_session(self):
-        assert False
+        # test on run
+        logger = Logger("db_testing", enable_notifications=False)
+        config = Config()
+
+        dbtest = Database(logger, config)
+        dbtest.create_database()
+
+        session: Session = dbtest.manage_session(session=None)
+        assert session
+        session: Session = dbtest.manage_session(session=session)
+        assert session
+        session: Session = dbtest.manage_session()
+        assert session
 
     def test_set_coins(self):
         logger = Logger("db_testing", enable_notifications=False)
@@ -202,6 +236,7 @@ class TestDatabase:
         print(type(pair))
         assert True
 
+    @pytest.mark.xfail
     def test_batch_log_scout(self):
         assert False
 

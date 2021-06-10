@@ -4,7 +4,7 @@ import os, datetime, pathlib
 
 #TODO fuse.hidenXXXXX - files don't remove directories
 
-@pytest.fixture()
+@pytest.fixture(autouse=True)
 def infra(delete_ok=False, delete_ok_first=False, dirs=['logs','data']):
 
     if delete_ok_first:

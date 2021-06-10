@@ -114,7 +114,7 @@ class MockBinanceManager(BinanceAPIManager):
         from_coin_price = self.get_ticker_price(origin_symbol + target_symbol)
         assert abs(buy_price - from_coin_price) < 1e-15 or buy_price == 0.0
 
-        order_quantity = self._buy_quantity(origin_symbol, target_symbol, target_balance, from_coin_price)
+        order_quantity = self.buy_quantity(origin_symbol, target_symbol, target_balance, from_coin_price)
         target_quantity = order_quantity * from_coin_price
         self.balances[target_symbol] -= target_quantity
         order_filled_quantity = order_quantity * (1 - self.get_fee(origin_coin, target_coin, False))
@@ -129,7 +129,7 @@ class MockBinanceManager(BinanceAPIManager):
                 lambda: None,
                 price=from_coin_price,
                 cummulativeQuoteQty=target_quantity,
-                executedQty=order_filled_quantity,
+                executedQty=order_quantity,
             )
         )
 
@@ -141,7 +141,7 @@ class MockBinanceManager(BinanceAPIManager):
         from_coin_price = self.get_ticker_price(origin_symbol + target_symbol)
         assert abs(sell_price - from_coin_price) < 1e-15
 
-        order_quantity = self._sell_quantity(origin_symbol, target_symbol, origin_balance)
+        order_quantity = self.sell_quantity(origin_symbol, target_symbol, origin_balance)
         target_quantity = order_quantity * from_coin_price
         target_filled_quantity = target_quantity * (1 - self.get_fee(origin_coin, target_coin, True))
         self.balances[target_symbol] = self.balances.get(target_symbol, 0) + target_filled_quantity
@@ -154,7 +154,7 @@ class MockBinanceManager(BinanceAPIManager):
             defaultdict(
                 lambda: None,
                 price=from_coin_price,
-                cummulativeQuoteQty=target_filled_quantity,
+                cummulativeQuoteQty=target_quantity,
                 executedQty=order_quantity,
             )
         )

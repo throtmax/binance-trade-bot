@@ -60,8 +60,8 @@ def test_backtest1_on_run(infra,DoUserConfig):
 
 @pytest.mark.timeout(600)
 @pytest.mark.parametrize("date_start",[datetime.datetime(2021,6,1),])
-@pytest.mark.parametrize("date_end",[datetime.datetime(2021,6,3),])
-@pytest.mark.parametrize("interval",[10,])
+@pytest.mark.parametrize("date_end",[datetime.datetime(2021,6,5),])
+@pytest.mark.parametrize("interval",[10,5,20,30])
 def test_backtest2_on_run(infra,DoUserConfig, date_start, date_end, interval):
     history = []
     for manager in backtest(date_start,date_end, interval=interval):

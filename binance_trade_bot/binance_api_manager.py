@@ -27,16 +27,15 @@ class BinanceAPIManager:
         self.config = config
 
         self.cache = BinanceCache()
-        self.stream_manager: Optional[BinanceStreamManager] = None
+        self.stream_manager: BinanceStreamManager = BinanceStreamManager(
+            self.cache,
+            self.config,
+            self.logger,
+        )
         self.setup_websockets()
 
     def setup_websockets(self):
-        self.stream_manager = BinanceStreamManager(
-            self.cache,
-            self.config,
-            self.binance_client,
-            self.logger,
-        )
+        self.stream_manager.start()
 
     @cached(cache=TTLCache(maxsize=1, ttl=43200))
     def get_trade_fees(self) -> Dict[str, float]:
@@ -78,6 +77,15 @@ class BinanceAPIManager:
         Get account information
         """
         return self.binance_client.get_account()
+
+    def get_market_sell_price(self, symbol: str, amount: float) -> (float, float):
+        return self.stream_manager.get_market_sell_price(symbol, amount)
+
+    def get_market_buy_price(self, symbol: str, quote_amount: float) -> (float, float):
+        return self.stream_manager.get_market_buy_price(symbol, quote_amount)
+
+    def get_market_sell_price_fill_quote(self, symbol: str, quote_amount: float) -> (float, float):
+        return self.stream_manager.get_market_sell_price_fill_quote(symbol, quote_amount)
 
     def get_ticker_price(self, ticker_symbol: str):
         """

@@ -1,14 +1,14 @@
 from collections import defaultdict
 from datetime import datetime
-from typing import Dict
+from typing import Dict, Tuple
 
 from sqlalchemy.orm import Session
 
 from .binance_api_manager import BinanceAPIManager
 from .config import Config
-from .database import Database, LogScout
+from .database import Database
 from .logger import Logger
-from .models import Coin, CoinValue, Pair
+from .models import Coin, CoinValue, Pair, ScoutHistory
 
 
 class AutoTrader:
@@ -21,32 +21,32 @@ class AutoTrader:
     def initialize(self):
         self.initialize_trade_thresholds()
 
-    def transaction_through_bridge(self, pair: Pair, sell_price: float, buy_price: float):
+    def transaction_through_bridge(self, from_coin: Coin, to_coin: Coin, sell_price: float, buy_price: float):
         """
         Jump from the source coin to the destination coin through bridge coin
         """
         can_sell = False
-        balance = self.manager.get_currency_balance(pair.from_coin.symbol)
+        balance = self.manager.get_currency_balance(from_coin.symbol)
 
         if balance and balance * sell_price > self.manager.get_min_notional(
-            pair.from_coin.symbol, self.config.BRIDGE.symbol
+            from_coin.symbol, self.config.BRIDGE.symbol
         ):
             can_sell = True
         else:
             self.logger.info("Skipping sell")
 
-        if can_sell and self.manager.sell_alt(pair.from_coin, self.config.BRIDGE, sell_price) is None:
+        if can_sell and self.manager.sell_alt(from_coin, self.config.BRIDGE, sell_price) is None:
             self.logger.info("Couldn't sell, going back to scouting mode...")
             return None
 
-        result = self.manager.buy_alt(pair.to_coin, self.config.BRIDGE, buy_price)
+        result = self.manager.buy_alt(to_coin, self.config.BRIDGE, buy_price)
         if result is not None:
-            self.db.set_current_coin(pair.to_coin)
+            self.db.set_current_coin(to_coin)
             price = result.price
             if abs(price) < 1e-15:
                 price = result.cumulative_filled_quantity / result.cumulative_quote_qty
 
-            self.update_trade_threshold(pair.to_coin, price)
+            self.update_trade_threshold(to_coin, price)
             return result
 
         self.logger.info("Couldn't buy, going back to scouting mode...")
@@ -110,7 +110,7 @@ class AutoTrader:
         """
         raise NotImplementedError()
 
-    def _get_ratios(self, coin: Coin, coin_price):
+    def _get_ratios(self, coin: Coin, coin_price, enable_scout_log=True) -> Tuple[Dict[Pair, float], Dict[str, float]]:
         """
         Given a coin, get the current price ratio for every other enabled coin
         """
@@ -128,7 +128,8 @@ class AutoTrader:
                 )
                 continue
 
-            scout_logs.append(LogScout(pair, pair.ratio, coin_price, optional_coin_price))
+            if enable_scout_log:
+                scout_logs.append(ScoutHistory(pair, pair.ratio, coin_price, optional_coin_price))
 
             # Obtain (current coin)/(optional coin)
             coin_opt_coin_ratio = coin_price / optional_coin_price
@@ -140,23 +141,47 @@ class AutoTrader:
             ratio_dict[pair] = (
                 coin_opt_coin_ratio - transaction_fee * self.config.SCOUT_MULTIPLIER * coin_opt_coin_ratio
             ) - pair.ratio
-        self.db.batch_log_scout(scout_logs)
-        return (ratio_dict, prices)
+
+        if len(scout_logs) > 0:
+            self.db.batch_log_scout(scout_logs)
+
+        return ratio_dict, prices
 
     def _jump_to_best_coin(self, coin: Coin, coin_price: float):
         """
         Given a coin, search for a coin to jump to
         """
-        ratio_dict, prices = self._get_ratios(coin, coin_price)
+        can_walk_deeper = True
+        jump_chain = [coin.symbol]
+        # We simulate a possible buy chain and land on its very end, updating all ratios along the path
+        # as it would be if we buy them all with real orders
+        last_coin: Coin = coin
+        last_coin_price = coin_price
+        while can_walk_deeper:
+            ratio_dict, prices = self._get_ratios(last_coin, last_coin_price, enable_scout_log=(len(jump_chain) == 1))
 
-        # keep only ratios bigger than zero
-        ratio_dict = {k: v for k, v in ratio_dict.items() if v > 0}
+            ratio_dict = {k: v for k, v in ratio_dict.items() if v > 0}
 
-        # if we have any viable options, pick the one with the biggest ratio
-        if ratio_dict:
-            best_pair = max(ratio_dict, key=ratio_dict.get)
-            self.logger.info(f"Will be jumping from {coin} to {best_pair.to_coin_id}")
-            self.transaction_through_bridge(best_pair, coin_price, prices[best_pair.to_coin_id])
+            # if we have any viable options, pick the one with the biggest ratio
+            if ratio_dict:
+                new_best_pair = max(ratio_dict, key=ratio_dict.get)
+                if len(jump_chain) > 1:  # update thresholds because we should buy anyway when walk through chain
+                    self.update_trade_threshold(last_coin, last_coin_price)
+                last_coin = new_best_pair.to_coin
+                last_coin_price = prices[last_coin.symbol]
+                jump_chain.append(last_coin.symbol)
+            else:
+                can_walk_deeper = False
+
+        if len(jump_chain) > 1:
+            if len(jump_chain) > 2:
+                self.logger.info(f"Squashed jump chain: {jump_chain}")
+            if jump_chain[0] != jump_chain[-1]:
+                self.logger.info(f"Will be jumping from {coin} to {last_coin}")
+                self.transaction_through_bridge(coin, last_coin, coin_price, last_coin_price)
+            else:
+                self.update_trade_threshold(coin, coin_price)
+                self.logger.info(f"Eliminated jump loop from {coin} to {coin}")
 
     def bridge_scout(self):
         """

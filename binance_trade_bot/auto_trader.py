@@ -270,16 +270,13 @@ class AutoTrader(ABC):
                         coin.symbol, self.config.BRIDGE.symbol, coin_amount
                     )
                     expected_bridge = expected_sold_quantity * coin_sell_price * 0.999 + bridge_balance
-                    expected_bought_quantity = (
-                        self.manager.buy_quantity(
-                            last_coin.symbol, self.config.BRIDGE.symbol, expected_bridge, last_coin_buy_price
-                        )
-                        * 0.999
+                    expected_bought_quantity_no_fees = self.manager.buy_quantity(
+                        last_coin.symbol, self.config.BRIDGE.symbol, expected_bridge, last_coin_buy_price
                     )
                     self.logger.info(
-                        f"Expected: {expected_bought_quantity:0.08f}, "
+                        f"Expected: {expected_bought_quantity_no_fees:0.08f}, "
                         f"Actual: {result.cumulative_filled_quantity:0.08f}, "
-                        f"Slippage: {expected_bought_quantity/result.cumulative_filled_quantity - 1:0.06%}"
+                        f"Slippage: {expected_bought_quantity_no_fees/result.cumulative_filled_quantity - 1:0.06%}"
                     )
                 else:
                     self.update_trade_threshold(coin, coin_sell_price, quote_amount)

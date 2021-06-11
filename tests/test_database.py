@@ -2,7 +2,7 @@ import pytest
 
 import os, datetime
 
-from sqlalchemy.orm import Session, scoped_session, sessionmaker
+from sqlalchemy.orm import Session
 
 from binance_trade_bot.database import Database, TradeLog
 from binance_trade_bot.logger import Logger
@@ -74,7 +74,7 @@ class TestDatabase:
         dbtest.create_database()
 
         session: Session = dbtest.db_session()
-        assert True
+        assert session
 
     @pytest.mark.skip(reason='Not actual')
     def test_schedule_execute_later(self):
@@ -227,7 +227,7 @@ class TestDatabase:
         logger = Logger("db_testing", enable_notifications=False)
         config = Config()
 
-        dbtest = Database(logger, config)
+        dbtest: Database = Database(logger, config)
         dbtest.create_database()
         dbtest.set_coins(config.SUPPORTED_COIN_LIST)
 
@@ -341,11 +341,11 @@ class TestTradeLog:
         # test on run
         config = Config()
 
-        dbtest = Database(Logger("db_testing", enable_notifications=False), config)
+        dbtest: Database = Database(Logger("db_testing", enable_notifications=False), config)
         dbtest.create_database()
         dbtest.set_coins(config.SUPPORTED_COIN_LIST)
 
-        trade  = TradeLog(dbtest,'XMR','DOGE',False)
+        trade  = TradeLog(dbtest, 'XMR', 'DOGE', False)
         trade.set_ordered(110.0, 30.0, 60)
         trade.set_complete(20.0)
 
@@ -359,7 +359,7 @@ class TestTradeLog:
         dbtest.create_database()
         dbtest.set_coins(config.SUPPORTED_COIN_LIST)
 
-        trade  = TradeLog(dbtest,'XMR','DOGE',True)
+        trade  = TradeLog(dbtest, 'XMR', 'DOGE', True)
         trade.set_ordered(110.0, 30.0, 60)
         trade.set_complete(20.0)
 

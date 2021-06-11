@@ -218,10 +218,10 @@ class TestDatabase:
         ccoin: Coin = dbtest.get_current_coin()
         assert config.SUPPORTED_COIN_LIST[-1] == ccoin.symbol
 
-    # TODO: find use
-    @pytest.mark.xfail
-    @pytest.mark.parametrize('from_coin',[Coin('XML'), 'XML'])
-    @pytest.mark.parametrize('to_coin',  [Coin('BTT'), 'BTT', 'XML'])
+    # TODO: Why not work in all?
+    ####@pytest.mark.xfail
+    @pytest.mark.parametrize('from_coin',[Coin('XMR'), 'XMR'])
+    @pytest.mark.parametrize('to_coin',  [Coin('DOGE'), 'EOS'])
     def test_get_pair(self, from_coin, to_coin):
 
         logger = Logger("db_testing", enable_notifications=False)
@@ -314,7 +314,9 @@ class TestDatabase:
 
         dbtest = Database(logger, config)
         dbtest.create_database()
-        dbtest.commit_rasio()
+        dbtest.set_coins(config.SUPPORTED_COIN_LIST)
+
+        dbtest.commit_ratios()
         assert True
 
     def test_batch_update_coin_values(self):

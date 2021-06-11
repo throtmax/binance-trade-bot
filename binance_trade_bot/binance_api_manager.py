@@ -42,11 +42,10 @@ class AbstractOrderBalanceManager(ABC):
             params["quoteOrderQty"] = float_as_decimal_str(quote_quantity)
         return self.create_order(**params)
 
-    def close(self):
-        pass
-
 
 class PaperOrderBalanceManager(AbstractOrderBalanceManager):
+    PERSIST_FILE_PATH = "data/paper_wallet.json"
+
     def __init__(
         self,
         bridge_symbol: str,
@@ -60,9 +59,24 @@ class PaperOrderBalanceManager(AbstractOrderBalanceManager):
         self.client = client
         self.cache = cache
         self.fake_order_id = 0
-        if read_persist and os.path.exists("data/paper_wallet.json"):
-            with open("data/paper_wallet.json") as json_file:
-                self.balances = json.load(json_file)
+        if read_persist:
+            data = self._read_persist()
+            if data is not None:
+                if "balances" in data:
+                    self.balances = data["balances"]
+                    self.fake_order_id = data["fake_order_id"]
+                else:
+                    self.balances = data  # to support older format
+
+    def _read_persist(self):
+        if os.path.exists(self.PERSIST_FILE_PATH):
+            with open(self.PERSIST_FILE_PATH) as json_file:
+                return json.load(json_file)
+        return None
+
+    def _write_persist(self):
+        with open(self.PERSIST_FILE_PATH, "w") as json_file:
+            json.dump({"balances": self.balances, "fake_order_id": self.fake_order_id}, json_file)
 
     def get_currency_balance(self, currency_symbol: str, force=False):
         return self.balances.get(currency_symbol, 0.0)
@@ -80,6 +94,10 @@ class PaperOrderBalanceManager(AbstractOrderBalanceManager):
             self.balances[symbol_base] = self.get_currency_balance(symbol_base) + quantity * 0.999
         self.cache.balances_changed_event.set()
         super().make_order(side, symbol, quantity, quote_quantity)
+        if side == Client.SIDE_BUY:
+            # we do it only after buy for transaction speed
+            # probably should be a better idea to make it a postponed call
+            self._write_persist()
 
         self.fake_order_id += 1
         return defaultdict(
@@ -92,10 +110,6 @@ class PaperOrderBalanceManager(AbstractOrderBalanceManager):
             side=side,
             type=Client.ORDER_TYPE_MARKET,
         )
-
-    def close(self):
-        with open("data/paper_wallet.json", "w") as json_file:
-            json.dump(self.balances, json_file)
 
 
 class BinanceOrderBalanceManager(AbstractOrderBalanceManager):
@@ -221,7 +235,6 @@ class BinanceAPIManager:  # pylint:disable=too-many-public-methods
         return base_fee
 
     def close(self):
-        self.order_balance_manager.close()
         self.stream_manager.close()
 
     def get_account(self):

@@ -1,5 +1,9 @@
 #!python3
+import atexit
+import os
+import signal
 import time
+from threading import Thread
 
 from .binance_api_manager import BinanceAPIManager
 from .config import Config
@@ -9,16 +13,39 @@ from .scheduler import SafeScheduler
 from .strategies import get_strategy
 
 
-def main():
+def main():  # pylint:disable=too-many-statements
+    exiting = False
     logger = Logger()
     logger.info("Starting")
 
     config = Config()
     db = Database(logger, config)
     if config.ENABLE_PAPER_TRADING:
-        manager = BinanceAPIManager.create_manager_paper_trading(config, db, logger, {config.BRIDGE.symbol: 2000.0})
+        manager = BinanceAPIManager.create_manager_paper_trading(config, db, logger, {config.BRIDGE.symbol: 21_000.0})
     else:
         manager = BinanceAPIManager.create_manager(config, db, logger)
+
+    def timeout_exit(timeout: int):
+        logger.info(f"Waiting for at most {timeout} seconds for clean-up")
+        thread = Thread(target=manager.close)
+        thread.start()
+        thread.join(timeout)
+
+    def exit_handler(*args):
+        nonlocal exiting
+        if exiting:
+            return
+        exiting = True
+        logger.info(f"{args}")
+        logger.info("Attempt to graceful shutdown")
+        timeout_exit(10)
+        # Currently ubwa may still prevent process from termination
+        # so os._exit should be a temporary WA for it
+        os._exit(0)  # pylint:disable=protected-access
+
+    signal.signal(signal.SIGINT, exit_handler)
+    signal.signal(signal.SIGTERM, exit_handler)
+    atexit.register(exit_handler)
 
     # check if we can access API feature that require valid config
     try:
@@ -54,9 +81,7 @@ def main():
     schedule.every(1).minutes.do(trader.update_values).tag("updating value history")
     schedule.every(1).minutes.do(db.prune_scout_history).tag("pruning scout history")
     schedule.every(1).hours.do(db.prune_value_history).tag("pruning value history")
-    try:
-        while True:
-            schedule.run_pending()
-            time.sleep(1)
-    finally:
-        manager.close()
+
+    while not exiting:
+        schedule.run_pending()
+        time.sleep(1)

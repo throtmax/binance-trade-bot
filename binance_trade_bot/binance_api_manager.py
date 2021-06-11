@@ -235,7 +235,8 @@ class BinanceAPIManager:  # pylint:disable=too-many-public-methods
         return base_fee
 
     def close(self):
-        self.stream_manager.close()
+        if self.stream_manager:
+            self.stream_manager.close()
 
     def get_account(self):
         """

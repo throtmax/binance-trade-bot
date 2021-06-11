@@ -32,6 +32,11 @@ class Strategy(AutoTrader):
         if current_coin_price is None:
             self.logger.info("Skipping scouting... current coin {} not found".format(current_coin + self.config.BRIDGE))
             return
+        if current_coin_amount * current_coin_price < self.manager.get_min_notional(
+            current_coin.symbol, self.config.BRIDGE.symbol
+        ):
+            self.logger.info(f"Current coin {current_coin.symbol} amount is below min notional, skip scouting")
+            return
 
         self._jump_to_best_coin(
             CoinStub.get_by_symbol(current_coin.symbol), current_coin_price, current_coin_quote, current_coin_amount

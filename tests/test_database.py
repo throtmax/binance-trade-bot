@@ -4,17 +4,17 @@ import os, datetime
 
 from sqlalchemy.orm import Session, scoped_session, sessionmaker
 
-from binance_trade_bot.database import Database
-from binance_trade_bot.logger   import Logger
-from binance_trade_bot.config   import Config
+from binance_trade_bot.database import Database, TradeLog
+from binance_trade_bot.logger import Logger
+from binance_trade_bot.config import Config
 from binance_trade_bot.models.coin import Coin
 from binance_trade_bot.models.coin_value import CoinValue
 
 from .common import infra
 
+
 @pytest.fixture(scope='class', autouse=True)
 def DoUserConfig():
-
     '''
     CURRENT_COIN_SYMBOL:
     SUPPORTED_COIN_LIST: "XLM TRX ICX EOS IOTA ONT QTUM ETC ADA XMR DASH NEO ATOM DOGE VET BAT OMG BTT"
@@ -31,24 +31,25 @@ def DoUserConfig():
     SELL_ORDER_TYPE: market
     '''
 
-    #os.environ['CURRENT_COIN'] = 'ETH'
+    # os.environ['CURRENT_COIN'] = 'ETH'
     os.environ['CURRENT_COIN_SYMBOL'] = 'ETH'
 
     os.environ['API_KEY'] = 'vmPUZE6mv9SD5VNHk4HlWFsOr6aKE2zvsw0MuIgwCIPy6utIco14y7Ju91duEh8A'
     os.environ['API_SECRET_KEY'] = 'NhqPtmdSJYdKjVHjA7PZj4Mge3R5YNiP1e3UZjInClVN65XAbvqqM6A7H5fATj0j'
-    #os.environ['CURRENT_COIN_SYMBOL'] = 'BTT'
+    # os.environ['CURRENT_COIN_SYMBOL'] = 'BTT'
     os.environ['SUPPORTED_COIN_LIST'] = "XLM TRX ICX EOS IOTA ONT QTUM ETC ADA XMR DASH NEO ATOM DOGE VET BAT OMG BTT"
     os.environ['BRIDGE_SYMBOL'] = "USDT"
     os.environ['SCOUT_MULTIPLIER'] = "5"
     os.environ['SCOUT_SLEEP_TIME'] = "1"
     os.environ['TLD'] = 'com'
     os.environ['STRATEGY'] = 'default'
-    os.environ['BUY_TIMEOUT']  = "0"
+    os.environ['BUY_TIMEOUT'] = "0"
     os.environ['SELL_TIMEOUT'] = "0"
     os.environ['BUY_ORDER_TYPE'] = 'limit'
     os.environ['SELL_ORDER_TYPE'] = 'market'
 
     yield
+
 
 class TestDatabase:
 
@@ -75,11 +76,11 @@ class TestDatabase:
         session: Session = dbtest.db_session()
         assert True
 
-    @pytest.mark.skip
+    @pytest.mark.skip(reason='Not actual')
     def test_schedule_execute_later(self):
         assert False
 
-    @pytest.mark.skip
+    @pytest.mark.skip(reason='Not actual')
     def test_execute_postponed_calls(self):
         assert False
 
@@ -219,9 +220,8 @@ class TestDatabase:
         assert config.SUPPORTED_COIN_LIST[-1] == ccoin.symbol
 
     # TODO: Why not work in all?
-    ####@pytest.mark.xfail
-    @pytest.mark.parametrize('from_coin',[Coin('XMR'), 'XMR'])
-    @pytest.mark.parametrize('to_coin',  [Coin('DOGE'), 'EOS'])
+    @pytest.mark.parametrize('from_coin', [Coin('XMR'), 'XMR'])
+    @pytest.mark.parametrize('to_coin', [Coin('DOGE'), 'EOS'])
     def test_get_pair(self, from_coin, to_coin):
 
         logger = Logger("db_testing", enable_notifications=False)
@@ -274,9 +274,9 @@ class TestDatabase:
         assert True
 
     # TODO : ATR ??? XML-XML ???
-    @pytest.mark.parametrize('from_coin',['XML','ATR'])
-    @pytest.mark.parametrize('to_coin',  ['BTT', 'XML'])
-    @pytest.mark.parametrize('selling',  [True, False])
+    @pytest.mark.parametrize('from_coin', ['XML', 'ATR'])
+    @pytest.mark.parametrize('to_coin', ['BTT', 'XML'])
+    @pytest.mark.parametrize('selling', [True, False])
     def test_start_trade_log(self, from_coin: str, to_coin: str, selling: bool):
 
         logger = Logger("db_testing", enable_notifications=False)
@@ -286,8 +286,8 @@ class TestDatabase:
         dbtest.create_database()
 
         tradeLog = dbtest.start_trade_log(from_coin, to_coin, selling)
-        #print(type(tradeLog))
-        #print(tradeLog)
+        # print(type(tradeLog))
+        # print(tradeLog)
 
         assert True
 
@@ -303,7 +303,7 @@ class TestDatabase:
 
         assert True
 
-    @pytest.mark.skip
+    @pytest.mark.skip(reason="Not actual")
     def test_migrate_old_state(self):
         assert False
 
@@ -330,7 +330,37 @@ class TestDatabase:
         dbtest.batch_update_coin_values([])
 
         vlist = [CoinValue(Coin('BTT'), 4.0, 5000.0, 0.89, 'HOURLY', None),
-                 CoinValue(Coin('BTT'), 4.0, 5000.0, 0.89, 'DAILY', datetime.datetime.now()),]
+                 CoinValue(Coin('BTT'), 4.0, 5000.0, 0.89, 'DAILY', datetime.datetime.now()), ]
         dbtest.batch_update_coin_values(vlist)
+
+        assert True
+
+
+class TestTradeLog:
+    def test_set_ordered(self):
+        # test on run
+        config = Config()
+
+        dbtest = Database(Logger("db_testing", enable_notifications=False), config)
+        dbtest.create_database()
+        dbtest.set_coins(config.SUPPORTED_COIN_LIST)
+
+        trade  = TradeLog(dbtest,'XMR','DOGE',False)
+        trade.set_ordered(110.0, 30.0, 60)
+        trade.set_complete(20.0)
+
+        assert True
+
+    def test_set_complete(self):
+        # test on run
+        config = Config()
+
+        dbtest = Database(Logger("db_testing", enable_notifications=False), config)
+        dbtest.create_database()
+        dbtest.set_coins(config.SUPPORTED_COIN_LIST)
+
+        trade  = TradeLog(dbtest,'XMR','DOGE',True)
+        trade.set_ordered(110.0, 30.0, 60)
+        trade.set_complete(20.0)
 
         assert True

@@ -12,6 +12,7 @@ from socketio.exceptions import ConnectionError as SocketIOConnectionError
 from sqlalchemy import bindparam, create_engine, func
 from sqlalchemy.orm import Session, scoped_session, sessionmaker
 
+from binance_trade_bot.postpone import heavy_call
 from binance_trade_bot.ratios import CoinStub, RatiosManager
 
 from .config import Config
@@ -29,7 +30,6 @@ class Database:
         self.session_factory = scoped_session(sessionmaker(bind=self.engine))
         self.ratios_manager: Optional[RatiosManager] = None
         self.socketio_client = Client()
-        self._execute_later = []
 
     def socketio_connect(self):
         if self.socketio_client.connected and self.socketio_client.namespaces:
@@ -52,14 +52,6 @@ class Database:
         yield session
         session.commit()
         session.close()
-
-    def schedule_execute_later(self, f, *args):
-        self._execute_later.append((f, args))
-
-    def execute_postponed_calls(self):
-        for f, args in self._execute_later:
-            f(*args)
-        self._execute_later.clear()
 
     def manage_session(self, session=None):
         if session is None:
@@ -154,6 +146,7 @@ class Database:
             session.expunge(pair)
             return pair
 
+    @heavy_call
     def batch_log_scout(self, logs: List[LogScout]):
         session: Session
         with self.db_session() as session:
@@ -272,6 +265,7 @@ class Database:
             os.rename(".current_coin_table", ".current_coin_table.old")
             self.logger.info(".current_coin_table renamed to .current_coin_table.old - " "You can now delete this file")
 
+    @heavy_call
     def commit_ratios(self):
         dirty_cells = self.ratios_manager.get_dirty()
 

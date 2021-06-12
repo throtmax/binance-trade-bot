@@ -15,6 +15,7 @@ from .binance_stream_manager import BinanceCache, BinanceOrder, BinanceStreamMan
 from .config import Config
 from .database import Database
 from .logger import Logger
+from .postpone import heavy_call
 
 
 def float_as_decimal_str(num: float):
@@ -345,12 +346,13 @@ class BinanceAPIManager:  # pylint:disable=too-many-public-methods
 
         self.logger.info(f"Bought {origin_symbol}")
 
+        @heavy_call
         def write_trade_log():
             trade_log = self.db.start_trade_log(origin_coin, target_coin, False)
             trade_log.set_ordered(origin_balance, target_balance, order_quantity)
             trade_log.set_complete(order.cumulative_quote_qty)
 
-        self.db.schedule_execute_later(write_trade_log)
+        write_trade_log()
 
         return order
 
@@ -396,11 +398,12 @@ class BinanceAPIManager:  # pylint:disable=too-many-public-methods
 
         self.logger.info(f"Sold {origin_symbol}")
 
+        @heavy_call
         def write_trade_log():
             trade_log = self.db.start_trade_log(origin_coin, target_coin, True)
             trade_log.set_ordered(origin_balance, target_balance, order_quantity)
             trade_log.set_complete(order.cumulative_quote_qty)
 
-        self.db.schedule_execute_later(write_trade_log)
+        write_trade_log()
 
         return order

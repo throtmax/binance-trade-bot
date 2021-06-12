@@ -245,23 +245,28 @@ class TestMockBinanceManager:
         assert res.price == from_coin_price
         assert res.cumulative_filled_quantity == order_quantity
 
-    # TODO: Add calculation
-    @pytest.mark.parametrize('origin_ticker',['BTT', 'XLM'])
-    @pytest.mark.parametrize('target_ticker',['USDT', ])
-    def test_sell_alt(self, DoUserConfig, mmbm, origin_ticker, target_ticker):
+    @pytest.mark.parametrize('origin_coin',['BTT', 'XLM'])
+    @pytest.mark.parametrize('target_coin',['USDT', ])
+    def test_sell_alt(self, DoUserConfig, mmbm, origin_coin, target_coin):
         db, manager = mmbm
 
-        target_balance = manager.get_currency_balance(target_ticker)
-        from_coin_price = manager.get_ticker_price(origin_ticker + target_ticker)
+        from_coin_price = manager.get_ticker_price(origin_coin + target_coin)
 
         sell_price = from_coin_price+1e-14
         with pytest.raises(AssertionError):
-            res = manager.sell_alt(origin_ticker, target_ticker, sell_price)
+            res = manager.sell_alt(origin_coin, target_coin, sell_price)
 
         sell_price = from_coin_price
-        res = manager.sell_alt(origin_ticker, target_ticker, sell_price)
+        origin_balance = manager.get_currency_balance(origin_coin)
+        order_quantity = manager.sell_quantity(origin_coin, target_coin, origin_balance)
+        target_quantity = order_quantity * from_coin_price
+
+        res = manager.sell_alt(origin_coin, target_coin, sell_price)
         print(res)
-        assert True
+        assert res.cumulative_quote_qty == target_quantity
+        assert res.price == from_coin_price
+        assert res.cumulative_filled_quantity == order_quantity
+
 
     # TODO: Add calculation
     @pytest.mark.parametrize('target_ticker',['BTT', 'XLM', 'DOGE'])

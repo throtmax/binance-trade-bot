@@ -182,6 +182,7 @@ class TestMockBinanceManager:
         assert manager.get_currency_balance('DOGE') == 101.0
         assert manager.get_currency_balance('BTT') == 102.0
         assert manager.get_currency_balance('BAD') == 103.0
+        assert manager.get_currency_balance('USDT') == 1000.0
 
     # TODO: No check on None result
     def test_get_market_sell_price(self, DoUserConfig, mmbm):
@@ -211,28 +212,38 @@ class TestMockBinanceManager:
         assert price01[0]
         assert price01[1] == qoute/price
 
-    # TODO: Add calculation
-    @pytest.mark.parametrize('origin_ticker',['BTT', 'XLM'])
-    @pytest.mark.parametrize('target_ticker',['USDT', ])
-    def test_buy_alt(self, DoUserConfig, mmbm, origin_ticker, target_ticker):
+    @pytest.mark.parametrize('origin_coin',['BTT', 'XLM'])
+    @pytest.mark.parametrize('target_coin',['USDT', ])
+    def test_buy_alt(self, DoUserConfig, mmbm, origin_coin, target_coin):
         db, manager = mmbm
 
-        target_balance = manager.get_currency_balance(target_ticker)
-        from_coin_price = manager.get_ticker_price(origin_ticker + target_ticker)
+        from_coin_price = manager.get_ticker_price(origin_coin + target_coin)
 
         buy_price = from_coin_price+1e-14
         with pytest.raises(AssertionError):
-            res = manager.buy_alt(origin_ticker, target_ticker, buy_price)
+            res: BinanceOrder = manager.buy_alt(origin_coin, target_coin, buy_price)
+
+        target_balance = manager.get_currency_balance(target_coin)
+        order_quantity =  manager.buy_quantity(origin_coin, target_coin, target_balance, from_coin_price)
+        target_quantity = order_quantity * from_coin_price
 
         buy_price = from_coin_price
-        res = manager.buy_alt(origin_ticker, target_ticker, buy_price)
-        print(res)
-        assert True
+        res: BinanceOrder = manager.buy_alt(origin_coin, target_coin, buy_price)
+
+        assert res.cumulative_quote_qty == target_quantity
+        assert res.price == from_coin_price
+        assert res.cumulative_filled_quantity == order_quantity
+
+        target_balance = manager.get_currency_balance(target_coin)
+        order_quantity = manager.buy_quantity(origin_coin, target_coin, target_balance, from_coin_price)
+        target_quantity = order_quantity * from_coin_price
 
         buy_price = 0.0
-        res = manager.buy_alt(origin_ticker, target_ticker, buy_price)
-        print(res)
-        assert True
+        res: BinanceOrder = manager.buy_alt(origin_coin, target_coin, buy_price)
+
+        assert res.cumulative_quote_qty == target_quantity
+        assert res.price == from_coin_price
+        assert res.cumulative_filled_quantity == order_quantity
 
     # TODO: Add calculation
     @pytest.mark.parametrize('origin_ticker',['BTT', 'XLM'])

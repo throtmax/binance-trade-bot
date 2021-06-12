@@ -26,7 +26,7 @@ class Database:
         self.logger = logger
         self.config = config
         self.engine = create_engine(uri)
-        self.SessionMaker = sessionmaker(bind=self.engine)
+        self.session_factory = scoped_session(sessionmaker(bind=self.engine))
         self.ratios_manager: Optional[RatiosManager] = None
         self.socketio_client = Client()
         self._execute_later = []
@@ -48,7 +48,7 @@ class Database:
         """
         Creates a context with an open SQLAlchemy session.
         """
-        session: Session = scoped_session(self.SessionMaker)
+        session: Session = self.session_factory()
         yield session
         session.commit()
         session.close()

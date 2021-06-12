@@ -15,6 +15,7 @@ from .binance_stream_manager import BinanceCache, BinanceOrder, BinanceStreamMan
 from .config import Config
 from .database import Database
 from .logger import Logger
+from .postpone import heavy_call
 
 
 def float_as_decimal_str(num: float):
@@ -42,11 +43,10 @@ class AbstractOrderBalanceManager(ABC):
             params["quoteOrderQty"] = float_as_decimal_str(quote_quantity)
         return self.create_order(**params)
 
-    def close(self):
-        pass
-
 
 class PaperOrderBalanceManager(AbstractOrderBalanceManager):
+    PERSIST_FILE_PATH = "data/paper_wallet.json"
+
     def __init__(
         self,
         bridge_symbol: str,
@@ -60,15 +60,30 @@ class PaperOrderBalanceManager(AbstractOrderBalanceManager):
         self.client = client
         self.cache = cache
         self.fake_order_id = 0
-        if read_persist and os.path.exists("data/paper_wallet.json"):
-            with open("data/paper_wallet.json") as json_file:
-                self.balances = json.load(json_file)
+        if read_persist:
+            data = self._read_persist()
+            if data is not None:
+                if "balances" in data:
+                    self.balances = data["balances"]
+                    self.fake_order_id = data["fake_order_id"]
+                else:
+                    self.balances = data  # to support older format
+
+    def _read_persist(self):
+        if os.path.exists(self.PERSIST_FILE_PATH):
+            with open(self.PERSIST_FILE_PATH) as json_file:
+                return json.load(json_file)
+        return None
+
+    def _write_persist(self):
+        with open(self.PERSIST_FILE_PATH, "w") as json_file:
+            json.dump({"balances": self.balances, "fake_order_id": self.fake_order_id}, json_file)
 
     def get_currency_balance(self, currency_symbol: str, force=False):
         return self.balances.get(currency_symbol, 0.0)
 
     def create_order(self, **params):
-        return self.client.create_test_order(**params)
+        return {}
 
     def make_order(self, side: str, symbol: str, quantity: float, quote_quantity: float):
         symbol_base = symbol[: -len(self.bridge)]
@@ -80,6 +95,10 @@ class PaperOrderBalanceManager(AbstractOrderBalanceManager):
             self.balances[symbol_base] = self.get_currency_balance(symbol_base) + quantity * 0.999
         self.cache.balances_changed_event.set()
         super().make_order(side, symbol, quantity, quote_quantity)
+        if side == Client.SIDE_BUY:
+            # we do it only after buy for transaction speed
+            # probably should be a better idea to make it a postponed call
+            self._write_persist()
 
         self.fake_order_id += 1
         return defaultdict(
@@ -92,10 +111,6 @@ class PaperOrderBalanceManager(AbstractOrderBalanceManager):
             side=side,
             type=Client.ORDER_TYPE_MARKET,
         )
-
-    def close(self):
-        with open("data/paper_wallet.json", "w") as json_file:
-            json.dump(self.balances, json_file)
 
 
 class BinanceOrderBalanceManager(AbstractOrderBalanceManager):
@@ -130,7 +145,7 @@ class BinanceOrderBalanceManager(AbstractOrderBalanceManager):
             return balance
 
 
-class BinanceAPIManager:
+class BinanceAPIManager:  # pylint:disable=too-many-public-methods
     def __init__(
         self,
         client: Client,
@@ -202,7 +217,7 @@ class BinanceAPIManager:
 
         # The discount is only applied if we have enough BNB to cover the fee
         amount_trading = (
-            self._sell_quantity(origin_coin, target_coin) if selling else self._buy_quantity(origin_coin, target_coin)
+            self.sell_quantity(origin_coin, target_coin) if selling else self.buy_quantity(origin_coin, target_coin)
         )
 
         fee_amount = amount_trading * base_fee * 0.75
@@ -221,8 +236,8 @@ class BinanceAPIManager:
         return base_fee
 
     def close(self):
-        self.order_balance_manager.close()
-        self.stream_manager.close()
+        if self.stream_manager:
+            self.stream_manager.close()
 
     def get_account(self):
         """
@@ -293,7 +308,7 @@ class BinanceAPIManager:
     def buy_alt(self, origin_coin: str, target_coin: str, buy_price: float) -> BinanceOrder:
         return self.retry(self._buy_alt, origin_coin, target_coin, buy_price)
 
-    def _buy_quantity(
+    def buy_quantity(
         self, origin_symbol: str, target_symbol: str, target_balance: float = None, from_coin_price: float = None
     ):
         target_balance = target_balance or self.get_currency_balance(target_symbol)
@@ -313,7 +328,7 @@ class BinanceAPIManager:
         target_balance = self.get_currency_balance(target_symbol)
         from_coin_price = buy_price
 
-        order_quantity = self._buy_quantity(origin_symbol, target_symbol, target_balance, from_coin_price)
+        order_quantity = self.buy_quantity(origin_symbol, target_symbol, target_balance, from_coin_price)
         self.logger.info(f"BUY QTY {order_quantity} of <{origin_symbol}>")
 
         order = self.order_balance_manager.make_order(
@@ -331,19 +346,20 @@ class BinanceAPIManager:
 
         self.logger.info(f"Bought {origin_symbol}")
 
+        @heavy_call
         def write_trade_log():
             trade_log = self.db.start_trade_log(origin_coin, target_coin, False)
             trade_log.set_ordered(origin_balance, target_balance, order_quantity)
             trade_log.set_complete(order.cumulative_quote_qty)
 
-        self.db.schedule_execute_later(write_trade_log)
+        write_trade_log()
 
         return order
 
     def sell_alt(self, origin_coin: str, target_coin: str, sell_price: float) -> BinanceOrder:
         return self.retry(self._sell_alt, origin_coin, target_coin, sell_price)
 
-    def _sell_quantity(self, origin_symbol: str, target_symbol: str, origin_balance: float = None):
+    def sell_quantity(self, origin_symbol: str, target_symbol: str, origin_balance: float = None):
         origin_balance = origin_balance or self.get_currency_balance(origin_symbol)
 
         origin_tick = self.get_alt_tick(origin_symbol, target_symbol)
@@ -360,7 +376,7 @@ class BinanceAPIManager:
         target_balance = self.get_currency_balance(target_symbol)
         from_coin_price = sell_price
 
-        order_quantity = self._sell_quantity(origin_symbol, target_symbol, origin_balance)
+        order_quantity = self.sell_quantity(origin_symbol, target_symbol, origin_balance)
         self.logger.info(f"Selling {order_quantity} of {origin_symbol}")
 
         self.logger.info(f"Balance is {origin_balance}")
@@ -382,11 +398,12 @@ class BinanceAPIManager:
 
         self.logger.info(f"Sold {origin_symbol}")
 
+        @heavy_call
         def write_trade_log():
             trade_log = self.db.start_trade_log(origin_coin, target_coin, True)
             trade_log.set_ordered(origin_balance, target_balance, order_quantity)
             trade_log.set_complete(order.cumulative_quote_qty)
 
-        self.db.schedule_execute_later(write_trade_log)
+        write_trade_log()
 
         return order

@@ -209,15 +209,15 @@ class TestMockBinanceManager:
         assert price01[1] == qoute/price
 
     # TODO: Add calculation
-    @pytest.mark.parametrize('origin_ticker',['BTT','XLM'])
-    @pytest.mark.parametrize('target_ticker',['USDT',])
+    @pytest.mark.parametrize('origin_ticker',['BTT', 'XLM'])
+    @pytest.mark.parametrize('target_ticker',['USDT', ])
     def test_buy_alt(self, DoUserConfig, mmbm, origin_ticker, target_ticker):
         db, manager = mmbm
 
         target_balance = manager.get_currency_balance(target_ticker)
         from_coin_price = manager.get_ticker_price(origin_ticker + target_ticker)
 
-        buy_price = from_coin_price+1e-13
+        buy_price = from_coin_price+1e-14
         with pytest.raises(AssertionError):
             res = manager.buy_alt(origin_ticker, target_ticker, buy_price)
 
@@ -231,14 +231,23 @@ class TestMockBinanceManager:
         print(res)
         assert True
 
-    @pytest.mark.skip
-    def test_sell_alt(self, DoUserConfig, mmbm):
+    # TODO: Add calculation
+    @pytest.mark.parametrize('origin_ticker',['BTT', 'XLM'])
+    @pytest.mark.parametrize('target_ticker',['USDT', ])
+    def test_sell_alt(self, DoUserConfig, mmbm, origin_ticker, target_ticker):
         db, manager = mmbm
-        res = manager.sell_alt('XLM', 'BTC', 0.34)
+
+        target_balance = manager.get_currency_balance(target_ticker)
+        from_coin_price = manager.get_ticker_price(origin_ticker + target_ticker)
+
+        sell_price = from_coin_price+1e-14
+        with pytest.raises(AssertionError):
+            res = manager.sell_alt(origin_ticker, target_ticker, sell_price)
+
+        sell_price = from_coin_price
+        res = manager.sell_alt(origin_ticker, target_ticker, sell_price)
         print(res)
-        #assert price01[0]
-        #assert price01[1] == qoute/price
-        assert False
+        assert True
 
     @pytest.mark.skip
     def test_collate_coins(self, DoUserConfig, mmbm):

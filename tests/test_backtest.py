@@ -12,7 +12,7 @@ from binance_trade_bot.binance_stream_manager import BinanceCache, BinanceOrder
 from binance_trade_bot.config import Config
 from binance_trade_bot.database import Database
 from binance_trade_bot.logger import Logger
-from binance_trade_bot.models import Pair, ScoutHistory
+from binance_trade_bot.models import Coin
 from binance_trade_bot.strategies import get_strategy
 
 
@@ -267,11 +267,39 @@ class TestMockBinanceManager:
         assert res.price == from_coin_price
         assert res.cumulative_filled_quantity == order_quantity
 
-
-    # TODO: Add calculation
-    @pytest.mark.parametrize('target_ticker',['BTT', 'XLM', 'DOGE'])
-    def test_collate_coins(self, DoUserConfig, mmbm, target_ticker):
+    def test_collate_coins(self, DoUserConfig, mmbm):
         db, manager = mmbm
-        res = manager.collate_coins(target_ticker)
-        print(f'\nresult - {res}')
-        assert True
+
+        manager.balances = dict()
+        manager.balances['XMR'] = 300
+
+        resres = manager.get_ticker_price('XMRUSDT')
+
+        res = manager.collate_coins('XMR')
+        #print(f'\nres - {res}')
+        assert res == 300
+
+        manager.balances = dict()
+        manager.balances['XMR'] = 400
+        manager.balances['BTT'] = 500
+
+        price1 = manager.get_ticker_price('XMRUSDT')
+        price2 = manager.get_ticker_price('BTTUSDT')
+        #print(price1, price2)
+        res = manager.collate_coins('USDT')
+        #print(f'\nres - {res}')
+        assert res == 400*price1+500*price2
+
+    # TODO: BRIDGE with balance (raise Binance APIEroor)?
+    @pytest.mark.xfail
+    def test_collate_coins1(self, DoUserConfig, mmbm): #, target_ticker):
+        db, manager = mmbm
+
+        manager.config.BRIDGE = Coin('BTT')
+        manager.balances = dict()
+        manager.balances[manager.config.BRIDGE.symbol] = 400
+
+        res = manager.collate_coins(manager.config.BRIDGE.symbol)
+        print(f'\nres - {res}')
+        assert res == 0.0
+

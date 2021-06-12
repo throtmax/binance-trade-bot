@@ -249,9 +249,10 @@ class TestMockBinanceManager:
         print(res)
         assert True
 
-    @pytest.mark.skip
-    def test_collate_coins(self, DoUserConfig, mmbm):
+    # TODO: Add calculation
+    @pytest.mark.parametrize('target_ticker',['BTT', 'XLM', 'DOGE'])
+    def test_collate_coins(self, DoUserConfig, mmbm, target_ticker):
         db, manager = mmbm
-        res = manager.sell_alt('BTT')
-        print(res)
-        assert False
+        res = manager.collate_coins(target_ticker)
+        print(f'\nresult - {res}')
+        assert True

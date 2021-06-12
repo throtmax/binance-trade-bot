@@ -31,12 +31,11 @@ def main():  # pylint:disable=too-many-statements
         thread.start()
         thread.join(timeout)
 
-    def exit_handler(*args):
+    def exit_handler(*_):
         nonlocal exiting
         if exiting:
             return
         exiting = True
-        logger.info(f"{args}")
         logger.info("Attempt to graceful shutdown")
         timeout_exit(10)
         # Currently ubwa may still prevent process from termination

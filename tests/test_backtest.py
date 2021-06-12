@@ -68,17 +68,14 @@ def test_backtest_main_module_on_run(capsys, infra, DoUserConfig):
 
     assert True
 
-
-#####@pytest.mark.skip(reason="for debug time")
 def test_backtest1_on_run(infra, DoUserConfig):
-    backtest(datetime.datetime(2021, 6, 1), datetime.datetime.now())
+    backtest(datetime.datetime(2021, 6, 1), datetime.datetime(2021, 6, 3))
     assert True
-
 
 @pytest.mark.timeout(600)
 @pytest.mark.parametrize("date_start", [datetime.datetime(2021, 6, 1), ])
 @pytest.mark.parametrize("date_end", [datetime.datetime(2021, 6, 5), ])
-@pytest.mark.parametrize("interval", [10, 5, 20, 30])
+@pytest.mark.parametrize("interval", [10, 5, 30])
 def test_backtest2_on_run(infra, DoUserConfig, date_start, date_end, interval):
     history = []
     for manager in backtest(date_start, date_end, interval=interval):
@@ -106,7 +103,6 @@ def mmbm():
     db = MockDatabase(logger, config)
     db.create_database()
     db.set_coins(config.SUPPORTED_COIN_LIST)
-    #print(config.SUPPORTED_COIN_LIST)
 
     start_date: datetime = datetime.datetime(2021, 6, 1)
     start_balances: Dict[str, float] = dict()
@@ -135,10 +131,12 @@ def mmbm():
 
 class TestMockBinanceManager:
 
-    # TODO: Relook later
-    @pytest.mark.skip
-    def test_set_reinit_trader_callback(self):
-        assert False
+    def test_set_reinit_trader_callback(self, DoUserConfig, mmbm):
+        def reinit(): return
+        db, manager = mmbm
+        assert manager.reinit_trader_callback is None
+        manager.set_reinit_trader_callback(reinit)
+        assert not(manager.reinit_trader_callback is None)
 
     @pytest.mark.parametrize("coins_list", [pytest.param([], marks=pytest.mark.xfail), ['XLM', 'DOGE'], ['BUGAGA', ]])
     def test_set_coins(self, DoUserConfig, mmbm, coins_list):
@@ -160,7 +158,7 @@ class TestMockBinanceManager:
         db, manager  = mmbm
         old_datetime = manager.datetime
         manager.increment(interval=interval)
-        print('\n', interval, old_datetime, manager.datetime)
+
         assert manager.datetime == datetime.timedelta(minutes=interval)+old_datetime
 
     def test_get_fee(self, DoUserConfig, mmbm):
@@ -172,7 +170,7 @@ class TestMockBinanceManager:
     def test_get_ticker_price(self,DoUserConfig, mmbm):
         db, manager = mmbm
         val = manager.get_ticker_price('XLMUSDT')
-        #print(val, manager.datetime)
+
         assert val
 
     def test_get_currency_balance(self, DoUserConfig, mmbm):
@@ -262,7 +260,7 @@ class TestMockBinanceManager:
         target_quantity = order_quantity * from_coin_price
 
         res = manager.sell_alt(origin_coin, target_coin, sell_price)
-        print(res)
+
         assert res.cumulative_quote_qty == target_quantity
         assert res.price == from_coin_price
         assert res.cumulative_filled_quantity == order_quantity
@@ -276,7 +274,7 @@ class TestMockBinanceManager:
         resres = manager.get_ticker_price('XMRUSDT')
 
         res = manager.collate_coins('XMR')
-        #print(f'\nres - {res}')
+
         assert res == 300
 
         manager.balances = dict()
@@ -285,9 +283,9 @@ class TestMockBinanceManager:
 
         price1 = manager.get_ticker_price('XMRUSDT')
         price2 = manager.get_ticker_price('BTTUSDT')
-        #print(price1, price2)
+
         res = manager.collate_coins('USDT')
-        #print(f'\nres - {res}')
+
         assert res == 400*price1+500*price2
 
     # TODO: BRIDGE with balance (raise Binance APIEroor)?
@@ -300,6 +298,6 @@ class TestMockBinanceManager:
         manager.balances[manager.config.BRIDGE.symbol] = 400
 
         res = manager.collate_coins(manager.config.BRIDGE.symbol)
-        print(f'\nres - {res}')
+        #print(f'\nres - {res}')
         assert res == 0.0
 

@@ -40,7 +40,7 @@ class AutoTrader(ABC):
             self.db.set_current_coin(to_coin.symbol)
             price = result.price
             if abs(price) < 1e-15:
-                price = result.cumulative_filled_quantity / result.cumulative_quote_qty
+                price = result.cumulative_quote_qty / result.cumulative_filled_quantity
 
             update_successful = False
             while not update_successful:

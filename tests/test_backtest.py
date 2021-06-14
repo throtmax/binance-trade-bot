@@ -68,10 +68,12 @@ def test_backtest_main_module_on_run(capsys, infra, DoUserConfig):
 
     assert True
 
+@pytest.mark.skip(reason='Long working time')
 def test_backtest1_on_run(infra, DoUserConfig):
     backtest(datetime.datetime(2021, 6, 1), datetime.datetime(2021, 6, 3))
     assert True
 
+@pytest.mark.skip(reason='Long working time')
 @pytest.mark.timeout(600)
 @pytest.mark.parametrize("date_start", [datetime.datetime(2021, 6, 1), ])
 @pytest.mark.parametrize("date_end", [datetime.datetime(2021, 6, 5), ])

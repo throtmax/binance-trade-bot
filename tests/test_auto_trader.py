@@ -99,6 +99,7 @@ class StubAutoTrader(AutoTrader) :
         return
 
 class TestAutoTrader:
+
     def test_initialize(self, DoUserConfig, mmbm):
         # test on run
         db, manager, logger, config = mmbm
@@ -121,8 +122,22 @@ class TestAutoTrader:
         autotrade.transaction_through_bridge(coinfrom, cointo, sell_price, buy_price)
         assert True
 
-    def test_update_trade_threshold(self):
-        assert False
+    # TODO: Check matrix+breaks
+    @pytest.mark.parametrize("coin_symbol",['XLM', 'DOGE'])
+    def test_update_trade_threshold(self, DoUserConfig, mmbm, coin_symbol):
+
+        # test on run
+        db, manager, logger, config = mmbm
+
+        autotrade = StubAutoTrader(manager, db, logger, config)
+
+        coin = CoinStub.get_by_symbol(coin_symbol)
+        res = autotrade.update_trade_threshold(coin, None, 100)
+        assert not res
+
+        coin = CoinStub.get_by_symbol('XLM')
+        res = autotrade.update_trade_threshold(coin, 1000, 100)
+        assert res
 
     def test__max_value_in_wallet(self):
         assert False

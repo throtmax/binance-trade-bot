@@ -106,7 +106,6 @@ class TestAutoTrader:
         autotrade.initialize()
         assert True
 
-    ####@pytest.mark.skip
     def test_transaction_through_bridge(self, DoUserConfig, mmbm):
         # test on run
         db, manager, logger, config = mmbm

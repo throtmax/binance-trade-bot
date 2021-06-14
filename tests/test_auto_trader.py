@@ -65,7 +65,7 @@ def mmbm():
     config: Config = Config()
     sqlite_cache = SqliteDict("data/testtest_cache.db")
 
-    db = MockDatabase(logger, config)
+    db = Database(logger, config)
     db.create_database()
     db.set_coins(config.SUPPORTED_COIN_LIST)
 
@@ -106,21 +106,18 @@ class TestAutoTrader:
         autotrade.initialize()
         assert True
 
-    @pytest.mark.skip
+    ####@pytest.mark.skip
     def test_transaction_through_bridge(self, DoUserConfig, mmbm):
         # test on run
         db, manager, logger, config = mmbm
 
-        db.set_coins(config.SUPPORTED_COIN_LIST)
-
         autotrade = StubAutoTrader(manager, db, logger, config)
-        print(config.BRIDGE, config.BRIDGE.symbol)
 
-        coinfrom = CoinStub.create('XLM')
-        cointo = CoinStub.create('BTT')
+        coinfrom = CoinStub.get_by_symbol('XLM')
+        cointo = CoinStub.get_by_symbol('EOS')
 
         sell_price = autotrade.manager.get_ticker_price('XLMUSDT')
-        buy_price  = autotrade.manager.get_ticker_price('BTTUSDT')
+        buy_price  = autotrade.manager.get_ticker_price('EOSUSDT')
 
         autotrade.transaction_through_bridge(coinfrom, cointo, sell_price, buy_price)
         assert True

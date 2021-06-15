@@ -7,14 +7,12 @@ from binance.client import Client
 from sqlitedict import SqliteDict
 
 from binance_trade_bot.auto_trader import AutoTrader
-from binance_trade_bot.backtest import backtest, MockDatabase, MockBinanceManager
-from binance_trade_bot.binance_api_manager import BinanceAPIManager, BinanceOrderBalanceManager
-from binance_trade_bot.binance_stream_manager import BinanceCache, BinanceOrder
+from binance_trade_bot.backtest import MockBinanceManager
+
+from binance_trade_bot.binance_stream_manager import BinanceCache
 from binance_trade_bot.config import Config
 from binance_trade_bot.database import Database
 from binance_trade_bot.logger import Logger
-from binance_trade_bot.models import Coin
-from binance_trade_bot.strategies import get_strategy
 from binance_trade_bot.ratios import CoinStub
 
 from .common import infra, dmlc

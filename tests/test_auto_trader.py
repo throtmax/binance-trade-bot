@@ -188,8 +188,9 @@ class TestAutoTrader:
 
         coin = CoinStub.get_by_symbol(coin_symbol)
         autotrade = StubAutoTrader(manager, db, logger, config)
+        from_coin_price = manager.get_ticker_price(coin_symbol + 'USDT')
 
-        autotrade._jump_to_best_coin(coin, 100, 100, 20)
+        autotrade._jump_to_best_coin(coin, from_coin_price, 100, 20)
         assert True
 
     # TODO: Check return coin & None

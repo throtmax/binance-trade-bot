@@ -70,11 +70,11 @@ def mmbm():
     start_date: datetime = datetime.datetime(2021, 6, 1)
     start_balances: Dict[str, float] = dict()
     #start_balances['BAD']  = None
-    start_balances['BAD']  = 10300000
-    start_balances['XLM']  = 100
+    #start_balances['BAD'] = 10300000
+    start_balances['XLM'] = 100
     start_balances['DOGE'] = 101
-    start_balances['BTT']  = 102
-    start_balances['USDT']  = 1000
+    start_balances['BTT'] = 102
+    start_balances['USDT'] = 1000
 
     manager = MockBinanceManager(
         Client(config.BINANCE_API_KEY, config.BINANCE_API_SECRET_KEY, tld=config.BINANCE_TLD),
@@ -102,8 +102,8 @@ class TestAutoTrader:
     def test_initialize(self, DoUserConfig, mmbm):
         # test on run
         db, manager, logger, config = mmbm
-        autotrade = StubAutoTrader(manager, db, logger, config)
-        autotrade.initialize()
+        autotrader = StubAutoTrader(manager, db, logger, config)
+        autotrader.initialize()
         assert True
 
     # TODO: Check infinity loop probably
@@ -111,15 +111,15 @@ class TestAutoTrader:
         # test on run
         db, manager, logger, config = mmbm
 
-        autotrade = StubAutoTrader(manager, db, logger, config)
+        autotrader = StubAutoTrader(manager, db, logger, config)
 
         coinfrom = CoinStub.get_by_symbol('XLM')
         cointo = CoinStub.get_by_symbol('EOS')
 
-        sell_price = autotrade.manager.get_ticker_price('XLMUSDT')
-        buy_price  = autotrade.manager.get_ticker_price('EOSUSDT')
+        sell_price = autotrader.manager.get_ticker_price('XLMUSDT')
+        buy_price  = autotrader.manager.get_ticker_price('EOSUSDT')
 
-        autotrade.transaction_through_bridge(coinfrom, cointo, sell_price, buy_price)
+        autotrader.transaction_through_bridge(coinfrom, cointo, sell_price, buy_price)
         assert True
 
     # TODO: Check set matrix + breaks
@@ -129,36 +129,37 @@ class TestAutoTrader:
         # test on run
         db, manager, logger, config = mmbm
 
-        autotrade = StubAutoTrader(manager, db, logger, config)
+        autotrader = StubAutoTrader(manager, db, logger, config)
 
         coin = CoinStub.get_by_symbol(coin_symbol)
-        res = autotrade.update_trade_threshold(coin, None, 100)
+        res = autotrader.update_trade_threshold(coin, None, 100)
         assert not res
 
         coin = CoinStub.get_by_symbol('XLM')
-        res = autotrade.update_trade_threshold(coin, 1000, 100)
+        res = autotrader.update_trade_threshold(coin, 1000, 100)
         assert res
 
     # TODO: Why time.sleep(1)?
+    # TODO: balanses[XXX] = None ! -1
     def test__max_value_in_wallet(self, DoUserConfig, mmbm):
         # test on run
         db, manager, logger, config = mmbm
 
-        autotrade = StubAutoTrader(manager, db, logger, config)
-        res = autotrade._max_value_in_wallet()
+        autotrader = StubAutoTrader(manager, db, logger, config)
+        res = autotrader._max_value_in_wallet()
+        print(f'_wallet {res}')
         assert True
 
-        #bridge_balance = autotrade.manager.get_currency_balance(autotrade.config.BRIDGE.symbol)
+        #bridge_balance = autotrader.manager.get_currency_balance(autotrade.config.BRIDGE.symbol)
         #assert res == bridge_balance
 
-    # TODO: Check range(10)
     def test_initialize_trade_thresholds(self, DoUserConfig, mmbm):
 
         # test on run
         db, manager, logger, config = mmbm
 
-        autotrade = StubAutoTrader(manager, db, logger, config)
-        res = autotrade.initialize_trade_thresholds()
+        autotrader = StubAutoTrader(manager, db, logger, config)
+        res = autotrader.initialize_trade_thresholds()
         assert True
 
     def test_scout(self, DoUserConfig, mmbm):
@@ -166,8 +167,8 @@ class TestAutoTrader:
         # test on run
         db, manager, logger, config = mmbm
 
-        autotrade = StubAutoTrader(manager, db, logger, config)
-        autotrade.scout()
+        autotrader = StubAutoTrader(manager, db, logger, config)
+        autotrader.scout()
         assert True
 
     # TODO: Check amounts
@@ -177,9 +178,9 @@ class TestAutoTrader:
         db, manager, logger, config = mmbm
 
         coin = CoinStub.get_by_symbol(coin_symbol)
-        autotrade = StubAutoTrader(manager, db, logger, config)
+        autotrader = StubAutoTrader(manager, db, logger, config)
 
-        ratio_dict, price_amounts = autotrade._get_ratios(coin,100,100)
+        ratio_dict, price_amounts = autotrader._get_ratios(coin,100,100)
         print('\n', ratio_dict, '\n', price_amounts)
         assert True
 
@@ -189,10 +190,10 @@ class TestAutoTrader:
         db, manager, logger, config = mmbm
 
         coin = CoinStub.get_by_symbol(coin_symbol)
-        autotrade = StubAutoTrader(manager, db, logger, config)
+        autotrader = StubAutoTrader(manager, db, logger, config)
         from_coin_price = manager.get_ticker_price(coin_symbol + 'USDT')
 
-        autotrade._jump_to_best_coin(coin, from_coin_price, 100, 20)
+        autotrader._jump_to_best_coin(coin, from_coin_price, 100, 20)
         assert True
 
     # TODO: Check return coin & None
@@ -200,16 +201,16 @@ class TestAutoTrader:
         # test on run
         db, manager, logger, config = mmbm
 
-        autotrade = StubAutoTrader(manager, db, logger, config)
+        autotrader = StubAutoTrader(manager, db, logger, config)
 
-        res = autotrade.bridge_scout()
+        res = autotrader.bridge_scout()
         assert res is None
 
     def test_update_values(self, DoUserConfig, mmbm):
         # test on run
         db, manager, logger, config = mmbm
 
-        autotrade = StubAutoTrader(manager, db, logger, config)
+        autotrader = StubAutoTrader(manager, db, logger, config)
 
-        autotrade.update_values()
+        autotrader.update_values()
         assert True

@@ -69,10 +69,11 @@ def mmbm():
 
     start_date: datetime = datetime.datetime(2021, 6, 1)
     start_balances: Dict[str, float] = dict()
+    #start_balances['BAD']  = None
+    start_balances['BAD']  = 10300000
     start_balances['XLM']  = 100
     start_balances['DOGE'] = 101
     start_balances['BTT']  = 102
-    start_balances['BAD']  = 103
     start_balances['USDT']  = 1000
 
     manager = MockBinanceManager(
@@ -105,6 +106,7 @@ class TestAutoTrader:
         autotrade.initialize()
         assert True
 
+    # TODO: Check infinity loop probably
     def test_transaction_through_bridge(self, DoUserConfig, mmbm):
         # test on run
         db, manager, logger, config = mmbm
@@ -120,7 +122,7 @@ class TestAutoTrader:
         autotrade.transaction_through_bridge(coinfrom, cointo, sell_price, buy_price)
         assert True
 
-    # TODO: Check matrix+breaks
+    # TODO: Check set matrix + breaks
     @pytest.mark.parametrize("coin_symbol",['XLM', 'DOGE'])
     def test_update_trade_threshold(self, DoUserConfig, mmbm, coin_symbol):
 
@@ -137,15 +139,17 @@ class TestAutoTrader:
         res = autotrade.update_trade_threshold(coin, 1000, 100)
         assert res
 
-    # TODO: Check value
+    # TODO: Why time.sleep(1)?
     def test__max_value_in_wallet(self, DoUserConfig, mmbm):
         # test on run
         db, manager, logger, config = mmbm
 
         autotrade = StubAutoTrader(manager, db, logger, config)
         res = autotrade._max_value_in_wallet()
-        print('\n_max_value_in_wallet', res)
         assert True
+
+        #bridge_balance = autotrade.manager.get_currency_balance(autotrade.config.BRIDGE.symbol)
+        #assert res == bridge_balance
 
     # TODO: Check range(10)
     def test_initialize_trade_thresholds(self, DoUserConfig, mmbm):

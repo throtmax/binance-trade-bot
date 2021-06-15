@@ -192,6 +192,7 @@ class TestAutoTrader:
         autotrade._jump_to_best_coin(coin, 100, 100, 20)
         assert True
 
+    # TODO: Check return coin & None
     def test_bridge_scout(self, DoUserConfig, mmbm):
         # test on run
         db, manager, logger, config = mmbm
@@ -201,5 +202,11 @@ class TestAutoTrader:
         res = autotrade.bridge_scout()
         assert res is None
 
-    def test_update_values(self):
-        assert False
+    def test_update_values(self, DoUserConfig, mmbm):
+        # test on run
+        db, manager, logger, config = mmbm
+
+        autotrade = StubAutoTrader(manager, db, logger, config)
+
+        autotrade.update_values()
+        assert True

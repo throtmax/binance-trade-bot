@@ -102,11 +102,21 @@ class TestStrategy:
         assert True
 
 
-    def test_scout(self):
-        assert False
+    def test_scout(self, DoUserConfig, mmbm):
+        # test on run
+        db, manager, logger, config = mmbm
+        trade = Strategy(manager, db, logger, config)
+        trade.initialize()
+        trade.scout()
+        assert True
 
-    def test_bridge_scout(self):
-        assert False
+    def test_bridge_scout(self, DoUserConfig, mmbm):
+        # test on run
+        db, manager, logger, config = mmbm
+        trade = Strategy(manager, db, logger, config)
+        trade.initialize()
+        trade.bridge_scout()
+        assert True
 
-    def test_initialize_current_coin(self):
+    def test_initialize_current_coin(self, DoUserConfig, mmbm):
         assert False

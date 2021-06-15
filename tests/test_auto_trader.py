@@ -139,8 +139,13 @@ class TestAutoTrader:
         res = autotrade.update_trade_threshold(coin, 1000, 100)
         assert res
 
-    def test__max_value_in_wallet(self):
-        assert False
+    def test__max_value_in_wallet(self, DoUserConfig, mmbm):
+        # test on run
+        db, manager, logger, config = mmbm
+
+        autotrade = StubAutoTrader(manager, db, logger, config)
+        res = autotrade._max_value_in_wallet()
+        assert True
 
     def test_initialize_trade_thresholds(self):
         assert False

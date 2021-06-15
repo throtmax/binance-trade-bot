@@ -139,22 +139,47 @@ class TestAutoTrader:
         res = autotrade.update_trade_threshold(coin, 1000, 100)
         assert res
 
+    # TODO: Check value
     def test__max_value_in_wallet(self, DoUserConfig, mmbm):
         # test on run
         db, manager, logger, config = mmbm
 
         autotrade = StubAutoTrader(manager, db, logger, config)
         res = autotrade._max_value_in_wallet()
+        print('\n_max_value_in_wallet', res)
         assert True
 
-    def test_initialize_trade_thresholds(self):
-        assert False
+    # TODO: Check range(10)
+    def test_initialize_trade_thresholds(self, DoUserConfig, mmbm):
 
-    def test_scout(self):
-        assert False
+        # test on run
+        db, manager, logger, config = mmbm
 
-    def test__get_ratios(self):
-        assert False
+        autotrade = StubAutoTrader(manager, db, logger, config)
+        res = autotrade.initialize_trade_thresholds()
+        assert True
+
+    def test_scout(self, DoUserConfig, mmbm):
+
+        # test on run
+        db, manager, logger, config = mmbm
+
+        autotrade = StubAutoTrader(manager, db, logger, config)
+        autotrade.scout()
+        assert True
+
+    # TODO: Check amounts
+    @pytest.mark.parametrize("coin_symbol",['XLM', 'DOGE'])
+    def test__get_ratios(self, DoUserConfig, mmbm, coin_symbol):
+        # test on run
+        db, manager, logger, config = mmbm
+
+        coin = CoinStub.get_by_symbol(coin_symbol)
+        autotrade = StubAutoTrader(manager, db, logger, config)
+
+        ratio_dict, price_amounts = autotrade._get_ratios(coin,100,100)
+        print('\n', ratio_dict, '\n', price_amounts)
+        assert True
 
     def test__jump_to_best_coin(self):
         assert False

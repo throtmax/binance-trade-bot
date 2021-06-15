@@ -181,11 +181,25 @@ class TestAutoTrader:
         print('\n', ratio_dict, '\n', price_amounts)
         assert True
 
-    def test__jump_to_best_coin(self):
-        assert False
+    @pytest.mark.parametrize("coin_symbol",['XLM', 'DOGE'])
+    def test__jump_to_best_coin(self, DoUserConfig, mmbm, coin_symbol):
+        # test on run
+        db, manager, logger, config = mmbm
 
-    def test_bridge_scout(self):
-        assert False
+        coin = CoinStub.get_by_symbol(coin_symbol)
+        autotrade = StubAutoTrader(manager, db, logger, config)
+
+        autotrade._jump_to_best_coin(coin, 100, 100, 20)
+        assert True
+
+    def test_bridge_scout(self, DoUserConfig, mmbm):
+        # test on run
+        db, manager, logger, config = mmbm
+
+        autotrade = StubAutoTrader(manager, db, logger, config)
+
+        res = autotrade.bridge_scout()
+        assert res is None
 
     def test_update_values(self):
         assert False

@@ -120,7 +120,8 @@ class TestDatabase:
         for ii in listCoins:
             assert ii.symbol in config.SUPPORTED_COIN_LIST, "No matched"
 
-    def test_get_coins(self):
+    @pytest.mark.parametrize('coins,counts', [([], 0), (['BAD'], 0), (['DOGE'], 0), (['ATR', 'XRL'], 0)])
+    def test_get_coins_False(self, coins, counts):
 
         logger = Logger("db_testing", enable_notifications=False)
         config = Config()
@@ -129,19 +130,35 @@ class TestDatabase:
         dbtest.create_database()
 
         # TODO: what do with enable?
-        # testing empty
-        dbtest.set_coins([])
-        listCoins = dbtest.get_coins(only_enabled=False)
-        assert len(listCoins) == len(config.SUPPORTED_COIN_LIST), "Not matched size"
-        for ii in listCoins:
-            assert ii.symbol in config.SUPPORTED_COIN_LIST, "No matched"
 
-        # testing not empty
-        dbtest.set_coins(config.SUPPORTED_COIN_LIST)
+        fullres = dbtest.get_coins(False); fullres = [ii.symbol for ii in fullres]
+        dbtest.set_coins(coins)
+
         listCoins = dbtest.get_coins(only_enabled=False)
-        assert len(listCoins) == len(config.SUPPORTED_COIN_LIST), "Not matched size"
+
         for ii in listCoins:
-            assert ii.symbol in config.SUPPORTED_COIN_LIST, "No matched"
+            assert ii.symbol in fullres, "Not found: "+ii.symbol
+        assert len(listCoins) == len(fullres), f"Not matched size"
+
+    @pytest.mark.parametrize('coins,counts', [([], 0), (['BAD'], 1), (['DOGE'], 1), (['ATR', 'XRL'], 2)])
+    def test_get_coins_True(self, coins, counts):
+
+        logger = Logger("db_testing", enable_notifications=False)
+        config = Config()
+
+        dbtest = Database(logger, config)
+        dbtest.create_database()
+
+        # TODO: what do with enable?
+
+        fullres = dbtest.get_coins(False); fullres = [ii.symbol for ii in fullres]
+        dbtest.set_coins(coins)
+
+        listCoins = dbtest.get_coins(only_enabled=True)
+
+        for ii in listCoins:
+            assert ii.symbol in coins, "Not found: "+ii.symbol
+        assert len(listCoins) == counts, f"Not matched size"
 
     def test_get_coin(self):
 
@@ -273,7 +290,6 @@ class TestDatabase:
         dbtest.create_database()
         assert True
 
-    # TODO : ATR ??? XML-XML ???
     @pytest.mark.parametrize('from_coin', ['XML', 'ATR'])
     @pytest.mark.parametrize('to_coin', ['BTT', 'XML'])
     @pytest.mark.parametrize('selling', [True, False])
@@ -291,16 +307,16 @@ class TestDatabase:
 
         assert True
 
-    # TODO: find using ?
-    def test_send_update(self):
+    # TODO: parameter send_update nou use???????????????
+    @pytest.mark.parametrize('coin', [None, 'XML', Coin('ATR'), 'BAD'])
+    def test_send_update(self, coin):
         # test on run
         logger = Logger("db_testing", enable_notifications=False)
         config = Config()
 
         dbtest = Database(logger, config)
         dbtest.create_database()
-        dbtest.send_update(None)
-
+        dbtest.send_update(coin)
         assert True
 
     @pytest.mark.skip(reason="Not actual")

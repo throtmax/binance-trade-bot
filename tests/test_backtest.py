@@ -184,7 +184,6 @@ class TestMockBinanceManager:
         assert manager.get_currency_balance('BAD') == 103.0
         assert manager.get_currency_balance('USDT') == 1000.0
 
-    # TODO: No check on None result
     def test_get_market_sell_price(self, DoUserConfig, mmbm):
         db, manager = mmbm
         val = manager.get_ticker_price('XLMUSDT')
@@ -192,7 +191,6 @@ class TestMockBinanceManager:
         assert price01[0]
         assert price01[1] == val*20.0
 
-    # TODO: No check on None result
     @pytest.mark.parametrize('ticker',['XLMUSDT', 'BTTUSDT','BTCUSDT'])
     def test_get_market_buy_price(self, DoUserConfig, mmbm, ticker):
         db, manager = mmbm
@@ -290,8 +288,6 @@ class TestMockBinanceManager:
 
         assert res == 400*price1+500*price2
 
-    # TODO: BRIDGE with balance (raise Binance APIEroor)?
-    @pytest.mark.xfail
     def test_collate_coins1(self, DoUserConfig, mmbm): #, target_ticker):
         db, manager = mmbm
 
@@ -301,5 +297,4 @@ class TestMockBinanceManager:
 
         res = manager.collate_coins(manager.config.BRIDGE.symbol)
         #print(f'\nres - {res}')
-        assert res == 0.0
-
+        assert res == 400.0

@@ -171,7 +171,6 @@ class TestAutoTrader:
         autotrader.scout()
         assert True
 
-    # TODO: Check amounts
     @pytest.mark.parametrize("coin_symbol",['XLM', 'DOGE'])
     def test__get_ratios(self, DoUserConfig, mmbm, coin_symbol):
         # test on run
@@ -180,9 +179,39 @@ class TestAutoTrader:
         coin = CoinStub.get_by_symbol(coin_symbol)
         autotrader = StubAutoTrader(manager, db, logger, config)
 
-        ratio_dict, price_amounts = autotrader._get_ratios(coin,100,100)
-        print('\n', ratio_dict, '\n', price_amounts)
+        ratio_dict, price_amounts = autotrader._get_ratios(coin, 100, 100)
+        #print('\n_get_ratios:', ratio_dict, '\n', price_amounts)
         assert True
+
+        # test on calculation. Calculate on first free coin (to_coin).
+
+        to_coin = CoinStub.get_by_idx(0 if coin.idx != 0 else 1)
+
+        ## Initial values for assert. Sell price & ratio
+        quote_amount = 10000
+        coin_sell_price = autotrader.manager.get_ticker_price(coin.symbol + autotrader.config.BRIDGE.symbol)
+        ratio_dict, price_amounts = autotrader._get_ratios(coin, coin_sell_price, quote_amount)
+
+        ## Calculation (???) & asserts
+        ratio = (autotrader.db.ratios_manager.get_from_coin(coin.idx))[to_coin.idx]  # 1 element from <coin> array
+
+        ratio_dict_to_coin = ratio_dict[(coin.idx, to_coin.idx)]  # 1 element from <coin> array
+        price_amounts_to_coin = price_amounts[to_coin.symbol]     # 1 element from <coin> array
+
+        optional_coin_buy_price, optional_coin_amount = autotrader.manager.get_market_buy_price(
+                              to_coin.symbol + autotrader.config.BRIDGE.symbol,
+                              quote_amount)
+        assert optional_coin_buy_price == price_amounts_to_coin[0]
+        assert optional_coin_amount == price_amounts_to_coin[1]
+
+        coin_opt_coin_ratio = coin_sell_price / optional_coin_buy_price
+
+        transaction_fee = autotrader.manager.get_fee(coin.symbol, autotrader.config.BRIDGE.symbol, True) + \
+                          autotrader.manager.get_fee(to_coin.symbol, autotrader.config.BRIDGE.symbol, False)
+
+        ## This is main ratio's elupopa :)
+        assert (coin_opt_coin_ratio - transaction_fee *
+                autotrader.config.SCOUT_MULTIPLIER * coin_opt_coin_ratio) - ratio == ratio_dict_to_coin
 
     @pytest.mark.parametrize("coin_symbol",['XLM', 'DOGE'])
     def test__jump_to_best_coin(self, DoUserConfig, mmbm, coin_symbol):
@@ -203,8 +232,33 @@ class TestAutoTrader:
 
         autotrader = StubAutoTrader(manager, db, logger, config)
 
+        pusher = []; pusher.append(autotrader.manager.balances[autotrader.config.BRIDGE.symbol])
+
+        autotrader.manager.balances[autotrader.config.BRIDGE.symbol] = -1
         res = autotrader.bridge_scout()
         assert res is None
+
+        autotrader.manager.balances[autotrader.config.BRIDGE.symbol] = pusher.pop()
+
+        if 0: # Why v<0? v<0 always.
+
+            pricer = {}
+
+            bridge_balance = autotrader.manager.get_currency_balance(autotrader.config.BRIDGE.symbol)
+
+            for coin in CoinStub.get_all():
+                if coin.symbol not in autotrader.manager.balances.keys():
+                    continue
+                if (autotrader.manager.balances[coin.symbol] > 0.0) and (coin != autotrader.config.BRIDGE):
+                    current_coin_price = autotrader.manager.get_ticker_price(coin.symbol + autotrader.config.BRIDGE.symbol)
+                    pricer[coin.symbol] = current_coin_price
+                    min_notional = autotrader.manager.get_min_notional(coin.symbol, autotrader.config.BRIDGE.symbol)
+                    print('\n',coin, min_notional)
+                    ratio_dict, _ = autotrader._get_ratios(coin, current_coin_price, bridge_balance)
+                    print([v > 0.0 for v in ratio_dict.values()])
+                    print(coin, current_coin_price, bridge_balance, ratio_dict)
+
+            print(pricer)
 
     def test_update_values(self, DoUserConfig, mmbm):
         # test on run

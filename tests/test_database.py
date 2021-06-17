@@ -8,6 +8,7 @@ from binance_trade_bot.database import Database, TradeLog
 from binance_trade_bot.logger import Logger
 from binance_trade_bot.config import Config
 from binance_trade_bot.models.coin import Coin
+from binance_trade_bot.models.pair import Pair
 from binance_trade_bot.models.coin_value import CoinValue
 
 from .common import infra
@@ -108,17 +109,17 @@ class TestDatabase:
 
         # testing empty
         dbtest.set_coins([])
-        listCoins = dbtest.get_coins(only_enabled=False)
-        assert len(listCoins) == len(config.SUPPORTED_COIN_LIST), "Not matched size"
+        listCoins = dbtest.get_coins(only_enabled=True)
         for ii in listCoins:
-            assert ii.symbol in config.SUPPORTED_COIN_LIST, "No matched"
+            assert (ii.symbol in config.SUPPORTED_COIN_LIST) or (ii.symbol == 'BAD'), "No matched "+ii.symbol
+        assert len(listCoins) == 0, "Not matched size"
 
         # testing not empty
         dbtest.set_coins(config.SUPPORTED_COIN_LIST)
-        listCoins = dbtest.get_coins(only_enabled=False)
-        assert len(listCoins) == len(config.SUPPORTED_COIN_LIST), "Not matched size"
+        listCoins = dbtest.get_coins(only_enabled=True)
         for ii in listCoins:
-            assert ii.symbol in config.SUPPORTED_COIN_LIST, "No matched"
+            assert (ii.symbol in config.SUPPORTED_COIN_LIST) or ('BAD' == ii.symbol), "No matched "+ii.symbol
+        assert len(listCoins) == len(config.SUPPORTED_COIN_LIST), "Not matched size"
 
     @pytest.mark.parametrize('coins,counts', [([], 0), (['BAD'], 0), (['DOGE'], 0), (['ATR', 'XRL'], 0)])
     def test_get_coins_False(self, coins, counts):
@@ -128,8 +129,6 @@ class TestDatabase:
 
         dbtest = Database(logger, config)
         dbtest.create_database()
-
-        # TODO: what do with enable?
 
         fullres = dbtest.get_coins(False); fullres = [ii.symbol for ii in fullres]
         dbtest.set_coins(coins)
@@ -149,8 +148,6 @@ class TestDatabase:
         dbtest = Database(logger, config)
         dbtest.create_database()
 
-        # TODO: what do with enable?
-
         fullres = dbtest.get_coins(False); fullres = [ii.symbol for ii in fullres]
         dbtest.set_coins(coins)
 
@@ -167,12 +164,6 @@ class TestDatabase:
 
         dbtest = Database(logger, config)
         dbtest.create_database()
-
-        # TODO: not KeyError raises?
-        '''
-        with pytest.raises(KeyError) :
-            ccoin = dbtest.get_coin('XXXXXX')
-        '''
 
         dbtest.set_coins(config.SUPPORTED_COIN_LIST)
 
@@ -191,12 +182,6 @@ class TestDatabase:
 
         dbtest = Database(logger, config)
         dbtest.create_database()
-
-        # TODO: not KeyError raises?
-        '''
-        with pytest.raises(KeyError) :
-            ccoin = dbtest.get_coin('XXXXXX')
-        '''
 
         dbtest.set_coins(config.SUPPORTED_COIN_LIST)
 
@@ -217,13 +202,6 @@ class TestDatabase:
         dbtest = Database(logger, config)
         dbtest.create_database()
 
-        # TODO: add specificate
-        # TODO: not KeyError raises?
-        '''
-        with pytest.raises(KeyError) :
-            ccoin = dbtest.get_coin('XXXXXX')
-        '''
-
         dbtest.set_coins(config.SUPPORTED_COIN_LIST)
 
         # testing string
@@ -236,7 +214,6 @@ class TestDatabase:
         ccoin: Coin = dbtest.get_current_coin()
         assert config.SUPPORTED_COIN_LIST[-1] == ccoin.symbol
 
-    # TODO: Why not work in all?
     @pytest.mark.parametrize('from_coin', [Coin('XMR'), 'XMR'])
     @pytest.mark.parametrize('to_coin', [Coin('DOGE'), 'EOS'])
     def test_get_pair(self, from_coin, to_coin):
@@ -249,11 +226,9 @@ class TestDatabase:
         dbtest.set_coins(config.SUPPORTED_COIN_LIST)
 
         pair = dbtest.get_pair(from_coin, to_coin)
-        print(pair)
-        print(type(pair))
-        assert True
+        assert isinstance(pair,Pair)
 
-    @pytest.mark.xfail
+    @pytest.mark.skip
     def test_batch_log_scout(self):
         assert False
 
@@ -307,7 +282,7 @@ class TestDatabase:
 
         assert True
 
-    # TODO: parameter send_update nou use???????????????
+    # TODO: parameter coin in send_update not using?
     @pytest.mark.parametrize('coin', [None, 'XML', Coin('ATR'), 'BAD'])
     def test_send_update(self, coin):
         # test on run

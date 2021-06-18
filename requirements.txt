@@ -13,6 +13,3 @@ sqlitedict==1.7.0
 unicorn-binance-websocket-api==1.30.0
 unicorn-fy==0.11.0
 sortedcontainers
-
-pytest~=6.2.4
-pathlib~=1.0.1

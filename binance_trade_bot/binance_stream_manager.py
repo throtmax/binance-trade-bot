@@ -1,4 +1,3 @@
-import abc
 import asyncio
 import concurrent.futures
 import threading
@@ -297,14 +296,9 @@ class AsyncListenerContext:
         self.stopped = False
         self.client = client
         self.depth_cache_managers = depth_cache_managers
-        self.replace_signals = {"CONNECT": set(), "DISCONNECT": set()}
 
     def attach_stream_uuid_resolver(self, resolver: Callable[[uuid.UUID], str]):
         self.resolver = resolver
-
-    def notify_stream_replace(self, old_stream_id: uuid.UUID, new_stream_id: uuid.UUID):
-        self.replace_signals["CONNECT"].add(new_stream_id)
-        self.replace_signals["DISCONNECT"].add(old_stream_id)
 
     def resolve_stream_id(self, stream_id: uuid.UUID) -> str:
         return self.resolver(stream_id)
@@ -420,13 +414,7 @@ BUFFER_NAME_USERDATA = "ud"
 BUFFER_NAME_DEPTH = "de"
 
 
-class LoopExecutor(abc.ABC):  # pylint:disable=too-few-public-methods
-    @abc.abstractmethod
-    async def run_loop(self):
-        ...
-
-
-class AsyncListener(LoopExecutor):
+class AsyncListener:
     def __init__(self, buffer_name: str, async_context: AsyncListenerContext):
         self.buffer_name = buffer_name
         self.async_context = async_context
@@ -446,16 +434,6 @@ class AsyncListener(LoopExecutor):
             data = await self.async_context.queues[self.buffer_name].get()
 
             if AsyncListener.is_stream_signal(data):
-                signal_type = data["type"]
-                if signal_type in self.async_context.replace_signals:
-                    stream_id = data["stream_id"]
-                    if stream_id in self.async_context.replace_signals[signal_type]:
-                        self.async_context.replace_signals[signal_type].remove(stream_id)
-                        self.async_context.logger.debug(f"skip {signal_type} signal for {self.buffer_name}")
-                        self.async_context.logger.debug(
-                            [(sig, len(x)) for sig, x in self.async_context.replace_signals.items()]
-                        )
-                        continue
                 await self.handle_signal(data)
             else:
                 await self.handle_data(data)
@@ -556,48 +534,6 @@ class BinanceStreamManager:
         ).result()
 
 
-class AutoReplacingStream(LoopExecutor):  # pylint:disable=too-few-public-methods
-    def __init__(
-        self,
-        bwam: BinanceWebSocketApiManager,
-        context: AsyncListenerContext,
-        channels,
-        markets,
-        api_key: Union[str, bool] = False,
-        api_secret: Union[str, bool] = False,
-        stream_buffer_name: Union[str, bool] = False,
-        restart_every=60 * 60,
-    ):  # pylint:disable=too-many-arguments
-        self.context = context
-        self.restart_every = restart_every
-        self.bwam = bwam
-        self.channels = channels
-        self.markets = markets
-        self.api_key = api_key
-        self.api_secret = api_secret
-        self.stream_buffer_name = stream_buffer_name
-        self.last_stream_id = self.last_stream_id = self.bwam.create_stream(
-            channels, markets, api_key=api_key, api_secret=api_secret, stream_buffer_name=stream_buffer_name
-        )
-
-    async def run_loop(self):
-        while True:
-            if self.bwam.is_manager_stopping():
-                return
-            await asyncio.sleep(self.restart_every)
-
-            old_stream_id = self.last_stream_id
-            self.last_stream_id = self.bwam.replace_stream(
-                self.last_stream_id,
-                self.channels,
-                self.markets,
-                new_stream_buffer_name=self.stream_buffer_name,
-                new_api_key=self.api_key,
-                new_api_secret=self.api_secret,
-            )
-            self.context.notify_stream_replace(old_stream_id, self.last_stream_id)
-
-
 class StreamManagerWorker(threading.Thread):
     def __init__(self, cache: BinanceCache, config: Config, logger: Logger, fut: concurrent.futures.Future):
         super().__init__()
@@ -630,25 +566,7 @@ class StreamManagerWorker(threading.Thread):
         )
         quotes = set(map(str.lower, [self.config.BRIDGE.symbol, "usdt", "btc", "bnb"]))
         markets = [coin.lower() + quote for quote in quotes for coin in self.config.SUPPORTED_COIN_LIST]
-        restart_every = 3600 * 4
-        streams: List[LoopExecutor] = [
-            AutoReplacingStream(
-                bwam,
-                async_context,
-                ["miniTicker"],
-                markets,
-                stream_buffer_name=BUFFER_NAME_MINITICKERS,
-                restart_every=restart_every,
-            ),
-            AutoReplacingStream(
-                bwam,
-                async_context,
-                ["depth@100ms"],
-                depth_markets,
-                stream_buffer_name=BUFFER_NAME_DEPTH,
-                restart_every=restart_every,
-            ),
-        ]
+        bwam.create_stream(["miniTicker"], markets, stream_buffer_name=BUFFER_NAME_MINITICKERS)
         bwam.create_stream(
             ["arr"],
             ["!userData"],
@@ -656,15 +574,16 @@ class StreamManagerWorker(threading.Thread):
             api_secret=self.config.BINANCE_API_SECRET_KEY,
             stream_buffer_name=BUFFER_NAME_USERDATA,
         )
-        listeners: List[LoopExecutor] = [
+
+        bwam.create_stream(["depth@100ms"], depth_markets, stream_buffer_name=BUFFER_NAME_DEPTH)
+        listeners = [
             TickerListener(async_context),
             UserDataListener(async_context),
             DepthListener(async_context, depth_cache_managers),
         ]
-        executors: List[LoopExecutor] = listeners + streams
         stream_manager = BinanceStreamManager(self.logger, async_context, bwam, self)
         self.fut.set_result(stream_manager)
-        await asyncio.gather(*[executable.run_loop() for executable in executors])
+        await asyncio.gather(*[listener.run_loop() for listener in listeners])
 
     def run(self):
         with suppress(asyncio.CancelledError):

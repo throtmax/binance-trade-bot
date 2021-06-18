@@ -1,37 +1,42 @@
-import pytest
+import datetime
+import pathlib
+import shutil
+from typing import Dict, List
 
-import os, datetime, pathlib
+import pytest
+from binance import Client
+from sqlitedict import SqliteDict
+
+from binance_trade_bot.backtest import MockBinanceManager, MockDatabase
+from binance_trade_bot.binance_stream_manager import BinanceCache
+from binance_trade_bot.config import Config
+from binance_trade_bot.logger import Logger
+
+
+def rm_rf(paths: List[pathlib.Path]):
+    for path in paths:
+        if path.exists():
+            shutil.rmtree(path)
+
 
 @pytest.fixture(autouse=True)
-def infra(delete_ok=False, delete_ok_first=False, dirs=['logs','data']):
+def infra(delete_ok=False, delete_ok_first=False, dirs=None):
+    dirs = [pathlib.Path(directory) for directory in dirs or ["logs", "data"]]
 
     if delete_ok_first:
-        for iidirs in dirs:
-            if pathlib.Path(iidirs).exists():
-                for child in pathlib.Path(iidirs).iterdir():
-                    print('\n',child)
-                    #pathlib.Path(child).unlink()
-                    os.remove(child)
-                pathlib.Path(iidirs).rmdir()
+        rm_rf(dirs)
 
-    for iidirs in dirs:
-        pathlib.Path(iidirs).mkdir(exist_ok=True)
+    for path in dirs:
+        path.mkdir(exist_ok=True)
 
     yield
 
-    if delete_ok :
-        for iidirs in dirs:
-            childs = [child for child in pathlib.Path(iidirs).iterdir()]
-            for child in childs:
-                pathlib.Path(child).unlink()
-                print(child)
-            pathlib.Path(iidirs).rmdir()
+    if delete_ok:
+        rm_rf(dirs)
 
-    return()
 
 @pytest.fixture()
 def dmlc():
-
     logger: Logger = Logger(logging_service="guliguli")
     config: Config = Config()
     sqlite_cache = SqliteDict("data/testtest_cache.db")
@@ -42,11 +47,11 @@ def dmlc():
 
     start_date: datetime = datetime.datetime(2021, 6, 1)
     start_balances: Dict[str, float] = dict()
-    start_balances['XLM']  = 100
-    start_balances['DOGE'] = 101
-    start_balances['BTT']  = 102
-    start_balances['BAD']  = 103
-    start_balances['USDT']  = 1000
+    start_balances["XLM"] = 100
+    start_balances["DOGE"] = 101
+    start_balances["BTT"] = 102
+    start_balances["BAD"] = 103
+    start_balances["USDT"] = 1000
 
     manager = MockBinanceManager(
         Client(config.BINANCE_API_KEY, config.BINANCE_API_SECRET_KEY, tld=config.BINANCE_TLD),
@@ -61,10 +66,9 @@ def dmlc():
 
     yield db, manager, logger, config
 
-    #manager.close()
-    #db.close()
+    # manager.close()
+    # db.close()
     sqlite_cache.close()
-
 
 
 def test_common(infra):

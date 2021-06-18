@@ -209,7 +209,7 @@ class DepthCacheManager:
         self.pending_reinit = False
         self.data_queue = deque()
         self.symbol = symbol
-        self.depth_cache = DepthCache(symbol)
+        self.depth_cache = DepthCache()
         self.client = client
         self.limit = limit
         self.last_update_id = -1

@@ -180,7 +180,7 @@ class Database:
                 CoinValue.coin_id, CoinValue, dt_column
             )
 
-            return select(grouped.selected_columns.id.label("id")).select_from(grouped.subquery())
+            return select(grouped.c.id.label("id")).select_from(grouped)
 
         def _update_query(datetime_query, interval):
             return (

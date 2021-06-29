@@ -2,7 +2,7 @@ import time
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from datetime import datetime
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
 
 from sqlalchemy.orm import Session
 
@@ -29,6 +29,8 @@ class AutoTrader(ABC):
         """
         Jump from the source coin to the destination coin through bridge coin
         """
+        to_coin_original_amount = self.manager.get_currency_balance(to_coin.symbol)
+
         if self.manager.sell_alt(from_coin.symbol, self.config.BRIDGE.symbol, sell_price) is None:
             self.logger.error(
                 f"Market sell failed, from_coin: {from_coin.symbol}, to_coin: {to_coin.symbol},"
@@ -44,7 +46,14 @@ class AutoTrader(ABC):
 
             update_successful = False
             while not update_successful:
-                update_successful = self.update_trade_threshold(to_coin, price, result.cumulative_quote_qty)
+                to_coin_amount = self.manager.get_currency_balance(to_coin.symbol)
+                while to_coin_original_amount >= to_coin_amount:
+                    balances_changed = self.manager.cache.balances_changed_event.wait(1.0)
+                    self.manager.cache.balances_changed_event.clear()
+                    to_coin_amount = self.manager.get_currency_balance(to_coin.symbol, force=(not balances_changed))
+                update_successful = self.update_trade_threshold(
+                    to_coin, from_coin, price, to_coin_amount, result.cumulative_quote_qty
+                )
                 if not update_successful:
                     self.logger.info("Update of ratios failed, retry in 1s")
                     time.sleep(1)
@@ -54,35 +63,62 @@ class AutoTrader(ABC):
         self.logger.info("Couldn't buy, going back to scouting mode...")
         return None
 
-    def update_trade_threshold(self, coin: CoinStub, coin_buy_price: float, quote_amount: float) -> bool:
+    def update_trade_threshold(
+        self,
+        to_coin: CoinStub,
+        from_coin: Optional[CoinStub],
+        to_coin_buy_price: float,
+        to_coin_amount: float,
+        quote_amount: float,
+    ) -> bool:
         """
         Update all the coins with the threshold of buying the current held coin
 
         :returns True if update was successful, False otherwise
         """
+        # Note: rethink if its better just to divide quote by price instead explicit passing amount
 
-        if coin_buy_price is None:
+        if to_coin_buy_price is None:
             self.logger.info(
-                "Skipping update... current coin {} not found".format(coin.symbol + self.config.BRIDGE.symbol)
+                "Skipping update... current coin {} not found".format(to_coin.symbol + self.config.BRIDGE.symbol)
             )
             return False
 
-        for from_coin in CoinStub.get_all():
-            if from_coin is coin:
+        for coin in CoinStub.get_all():
+            if coin is to_coin:
                 continue
 
-            from_coin_price, _ = self.manager.get_market_sell_price_fill_quote(
-                from_coin.symbol + self.config.BRIDGE.symbol, quote_amount
+            coin_price, _ = self.manager.get_market_sell_price_fill_quote(
+                coin.symbol + self.config.BRIDGE.symbol, quote_amount
             )
 
-            if from_coin_price is None:
+            if coin_price is None:
                 self.logger.info(
-                    f"Update for coin {from_coin.symbol + self.config.BRIDGE.symbol} can't be performed, not enough "
+                    f"Update for coin {coin.symbol + self.config.BRIDGE.symbol} can't be performed, not enough "
                     f"orders in order book "
                 )
                 return False
 
-            self.db.ratios_manager.set(from_coin.idx, coin.idx, from_coin_price / coin_buy_price)
+            self.db.ratios_manager.set(coin.idx, to_coin.idx, coin_price / to_coin_buy_price)
+
+        if from_coin is not None:
+            from_coin_buy_price, _ = self.manager.get_market_buy_price(
+                from_coin.symbol + self.config.BRIDGE.symbol, quote_amount
+            )
+            to_coin_sell_price, _ = self.manager.get_market_sell_price(
+                to_coin.symbol + self.config.BRIDGE.symbol, to_coin_amount
+            )
+            if from_coin_buy_price is None or to_coin_sell_price is None:
+                self.logger.info(
+                    f"Can't update reverse pair {to_coin.symbol}->{from_coin.symbol}, not enough orders in order book"
+                )
+                return False
+            self.db.ratios_manager.set(
+                to_coin.idx,
+                from_coin.idx,
+                max(self.db.ratios_manager.get(to_coin.idx, from_coin.idx), to_coin_sell_price / from_coin_buy_price),
+            )
+
         return True
 
     def _max_value_in_wallet(self) -> float:
@@ -246,12 +282,15 @@ class AutoTrader(ABC):
             # if we have any viable options, pick the one with the biggest ratio
             if ratio_dict:
                 new_best_pair = max(ratio_dict, key=ratio_dict.get)
+                new_best_coin = CoinStub.get_by_idx(new_best_pair[1])
                 if not is_initial_coin:  # update thresholds because we should buy anyway when walk through chain
                     # This should be performed in a single transaction so we don't leave our ratios in invalid state
-                    if not self.update_trade_threshold(last_coin, last_coin_buy_price, last_coin_quote):
+                    if not self.update_trade_threshold(
+                        last_coin, new_best_coin, last_coin_buy_price, last_coin_amount, last_coin_quote
+                    ):
                         self.db.ratios_manager.rollback()
                         return
-                last_coin = CoinStub.get_by_idx(new_best_pair[1])
+                last_coin = new_best_coin
                 last_coin_buy_price, last_coin_amount = prices[last_coin.symbol]
                 jump_chain.append(last_coin.symbol)
                 is_initial_coin = False
@@ -276,7 +315,7 @@ class AutoTrader(ABC):
                     f"Slippage: {expected_bought_quantity_no_fees/result.cumulative_filled_quantity - 1:0.06%}"
                 )
             else:
-                self.update_trade_threshold(coin, coin_sell_price, quote_amount)
+                self.update_trade_threshold(coin, None, coin_sell_price, 0, quote_amount)
                 self.logger.info(f"Eliminated jump loop from {coin.symbol} to {coin.symbol}")
 
     @postpone_heavy_calls
